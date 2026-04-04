@@ -81,7 +81,7 @@ class LoadRequest(BaseModel):
 @app.get("/", response_class=HTMLResponse)
 async def serve_ui():
     html_path = Path(__file__).parent / "index.html"
-    return HTMLResponse(html_path.read_text())
+    return HTMLResponse(html_path.read_text(encoding="utf-8"))
 
 
 # ── Build endpoints ──────────────────────────────────────
