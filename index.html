@@ -1,0 +1,697 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>LlamaForge</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg-0: #0a0a0c;
+    --bg-1: #111115;
+    --bg-2: #19191f;
+    --bg-3: #222230;
+    --border: #2a2a36;
+    --border-focus: #3d3d50;
+    --text-0: #e8e6f0;
+    --text-1: #a8a6b4;
+    --text-2: #6e6c7e;
+    --accent: #e8922f;
+    --accent-dim: #c47520;
+    --accent-glow: rgba(232, 146, 47, 0.12);
+    --green: #3dd68c;
+    --green-dim: rgba(61, 214, 140, 0.12);
+    --red: #f04e6a;
+    --red-dim: rgba(240, 78, 106, 0.10);
+    --blue: #5b9cf5;
+    --blue-dim: rgba(91, 156, 245, 0.10);
+    --radius: 8px;
+    --font-sans: 'DM Sans', system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+  }
+
+  html { font-size: 15px; }
+  body {
+    font-family: var(--font-sans);
+    background: var(--bg-0);
+    color: var(--text-0);
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  #root { max-width: 860px; margin: 0 auto; padding: 2rem 1.5rem 4rem; }
+
+  /* ── Header ────────────────────────────── */
+  .header {
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+    margin-bottom: 2.5rem;
+    padding-bottom: 1.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .header h1 {
+    font-family: var(--font-mono);
+    font-size: 1.6rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    background: linear-gradient(135deg, var(--accent) 0%, #f0c060 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .header .version {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--text-2);
+    border: 1px solid var(--border);
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+  }
+
+  /* ── Section cards ─────────────────────── */
+  .card {
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.5rem;
+    margin-bottom: 1.25rem;
+  }
+  .card-title {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-2);
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .card-title .dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .dot-idle { background: var(--text-2); }
+  .dot-ok { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .dot-warn { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+  .dot-err { background: var(--red); box-shadow: 0 0 6px var(--red); }
+  .dot-spin {
+    background: var(--accent);
+    animation: pulse 1s ease-in-out infinite alternate;
+  }
+  @keyframes pulse { from { opacity: .4; } to { opacity: 1; } }
+
+  /* ── Info row ──────────────────────────── */
+  .info-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.5rem;
+    margin-bottom: 1rem;
+  }
+  .info-item label {
+    display: block;
+    font-size: 0.68rem;
+    font-family: var(--font-mono);
+    color: var(--text-2);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    margin-bottom: 0.2rem;
+  }
+  .info-item span {
+    font-size: 0.88rem;
+    color: var(--text-1);
+    font-family: var(--font-mono);
+    word-break: break-all;
+  }
+
+  /* ── Buttons ───────────────────────────── */
+  button {
+    font-family: var(--font-sans);
+    font-size: 0.82rem;
+    font-weight: 600;
+    border: none;
+    border-radius: 6px;
+    padding: 0.55rem 1.1rem;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .btn-primary {
+    background: var(--accent);
+    color: #000;
+  }
+  .btn-primary:hover { background: var(--accent-dim); }
+  .btn-primary:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  .btn-secondary {
+    background: var(--bg-3);
+    color: var(--text-1);
+    border: 1px solid var(--border);
+  }
+  .btn-secondary:hover { border-color: var(--border-focus); }
+  .btn-danger {
+    background: var(--red-dim);
+    color: var(--red);
+    border: 1px solid transparent;
+  }
+  .btn-danger:hover { border-color: var(--red); }
+  .btn-sm { padding: 0.35rem 0.7rem; font-size: 0.75rem; }
+
+  /* ── Inputs ────────────────────────────── */
+  input[type="text"], input[type="number"], input[type="url"], select {
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    background: var(--bg-0);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.55rem 0.75rem;
+    color: var(--text-0);
+    outline: none;
+    transition: border-color 0.15s;
+    width: 100%;
+  }
+  input:focus, select:focus { border-color: var(--accent); }
+  input::placeholder { color: var(--text-2); }
+  select option {
+    background: var(--bg-1);
+    color: var(--text-0);
+  }
+
+  /* ── Log box ───────────────────────────── */
+  .log-box {
+    background: var(--bg-0);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.75rem;
+    max-height: 200px;
+    overflow-y: auto;
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    line-height: 1.5;
+    color: var(--text-2);
+    white-space: pre-wrap;
+    word-break: break-all;
+    margin-top: 0.75rem;
+  }
+
+  /* ── Model list ────────────────────────── */
+  .model-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.65rem 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .model-row:last-child { border-bottom: none; }
+  .model-name {
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    color: var(--text-0);
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .model-size {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    color: var(--text-2);
+    flex-shrink: 0;
+  }
+
+  /* ── Progress bar ──────────────────────── */
+  .progress-track {
+    width: 100%;
+    height: 6px;
+    background: var(--bg-0);
+    border-radius: 3px;
+    margin-top: 0.5rem;
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), #f0c060);
+    border-radius: 3px;
+    transition: width 0.3s ease;
+  }
+
+  /* ── Download item ─────────────────────── */
+  .download-item {
+    padding: 0.65rem 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .download-item:last-child { border-bottom: none; }
+  .download-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.25rem;
+  }
+  .download-stats {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    color: var(--text-2);
+  }
+
+  /* ── Endpoint banner ───────────────────── */
+  .endpoint-banner {
+    background: var(--green-dim);
+    border: 1px solid rgba(61, 214, 140, 0.25);
+    border-radius: 6px;
+    padding: 0.75rem 1rem;
+    margin-top: 0.75rem;
+  }
+  .endpoint-banner code {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    color: var(--green);
+    user-select: all;
+  }
+  .endpoint-banner p {
+    font-size: 0.75rem;
+    color: var(--text-2);
+    margin-top: 0.35rem;
+    line-height: 1.5;
+  }
+
+  /* ── Params grid ───────────────────────── */
+  .params-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+  }
+  .params-grid label {
+    display: block;
+    font-size: 0.68rem;
+    font-family: var(--font-mono);
+    color: var(--text-2);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    margin-bottom: 0.25rem;
+  }
+
+  /* ── Responsive ────────────────────────── */
+  @media (max-width: 600px) {
+    .params-grid { grid-template-columns: 1fr; }
+    .info-row { gap: 0.75rem; }
+    #root { padding: 1.25rem 1rem; }
+  }
+
+  /* ── Scrollbar ─────────────────────────── */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg-0); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.26.2/babel.min.js"></script>
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+// ── API helpers ──────────────────────────────────────────
+const api = {
+  get: (path) => fetch(path).then(r => r.json()),
+  post: (path, body) => fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  }).then(r => { if (!r.ok) return r.json().then(e => { throw new Error(e.detail) }); return r.json(); }),
+  del: (path) => fetch(path, { method: "DELETE" }).then(r => r.json()),
+};
+
+// ── Hook: poll endpoint ──────────────────────────────────
+function usePoll(url, intervalMs = 2000) {
+  const [data, setData] = useState(null);
+  useEffect(() => {
+    let active = true;
+    const poll = () => api.get(url).then(d => active && setData(d)).catch(() => {});
+    poll();
+    const id = setInterval(poll, intervalMs);
+    return () => { active = false; clearInterval(id); };
+  }, [url, intervalMs]);
+  return data;
+}
+
+// ── Build Section ────────────────────────────────────────
+function BuildSection() {
+  const status = usePoll("/api/build/status", 1500);
+  const [showLog, setShowLog] = useState(false);
+
+  if (!status) return null;
+
+  const isBuilding = status.status === "building";
+  const dotClass = {
+    idle: "dot-idle", building: "dot-spin", success: "dot-ok", failed: "dot-err"
+  }[status.status] || "dot-idle";
+
+  const handleBuild = () => {
+    api.post("/api/build/start").catch(e => alert(e.message));
+  };
+
+  return (
+    <div className="card">
+      <div className="card-title">
+        <span className={`dot ${dotClass}`} />
+        llama.cpp build engine
+      </div>
+
+      <div className="info-row">
+        <div className="info-item">
+          <label>Status</label>
+          <span>{status.status}</span>
+        </div>
+        {status.commit && (
+          <div className="info-item">
+            <label>Commit</label>
+            <span>{status.commit}</span>
+          </div>
+        )}
+        {status.commit_date && (
+          <div className="info-item">
+            <label>Date</label>
+            <span>{status.commit_date.split(" ")[0]}</span>
+          </div>
+        )}
+        <div className="info-item">
+          <label>Binary</label>
+          <span>{status.binary_exists ? "✓ ready" : "✗ not built"}</span>
+        </div>
+      </div>
+
+      {isBuilding && (
+        <div style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", color: "var(--text-2)", marginBottom: "0.75rem" }}>
+          ▸ {status.progress}
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+        <button className="btn-primary" onClick={handleBuild} disabled={isBuilding}>
+          {isBuilding ? "Building…" : status.repo_cloned ? "Pull & Rebuild" : "Clone & Build"}
+        </button>
+        {status.log && (
+          <button className="btn-secondary btn-sm" onClick={() => setShowLog(v => !v)}>
+            {showLog ? "Hide Log" : "Show Log"}
+          </button>
+        )}
+      </div>
+
+      {status.error && (
+        <div style={{ marginTop: "0.75rem", fontFamily: "var(--font-mono)", fontSize: "0.75rem", color: "var(--red)" }}>
+          Error: {status.error.slice(0, 300)}
+        </div>
+      )}
+
+      {showLog && status.log && (
+        <div className="log-box">{status.log}</div>
+      )}
+    </div>
+  );
+}
+
+// ── Download Section ─────────────────────────────────────
+function DownloadSection({ onRefreshModels }) {
+  const [url, setUrl] = useState("");
+  const [error, setError] = useState("");
+  const modelsData = usePoll("/api/models", 2000);
+
+  const downloads = modelsData ? Object.values(modelsData.downloads).filter(d => d.status === "downloading") : [];
+
+  const handleDownload = () => {
+    setError("");
+    if (!url.trim()) return;
+    api.post("/api/models/download", { url: url.trim() })
+      .then(() => setUrl(""))
+      .catch(e => setError(e.message));
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter") handleDownload();
+  };
+
+  return (
+    <div className="card">
+      <div className="card-title">
+        <span className="dot dot-idle" />
+        Download GGUF Models
+      </div>
+
+      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.5rem" }}>
+        <input
+          type="url"
+          placeholder="https://huggingface.co/user/repo/resolve/main/model.gguf"
+          value={url}
+          onChange={e => setUrl(e.target.value)}
+          onKeyDown={handleKeyDown}
+          style={{ flex: 1 }}
+        />
+        <button className="btn-primary" onClick={handleDownload}>Download</button>
+      </div>
+
+      {error && (
+        <div style={{ fontFamily: "var(--font-mono)", fontSize: "0.72rem", color: "var(--red)", marginBottom: "0.5rem" }}>
+          {error}
+        </div>
+      )}
+
+      <div style={{ fontSize: "0.72rem", color: "var(--text-2)", marginBottom: "0.5rem" }}>
+        Paste a HuggingFace link to any .gguf file. Supports /resolve/ and /blob/ URLs.
+      </div>
+
+      {downloads.map(dl => (
+        <div key={dl.filename} className="download-item">
+          <div className="download-header">
+            <span className="model-name" style={{ fontSize: "0.78rem" }}>{dl.filename}</span>
+            <span className="download-stats">{dl.progress}% · {dl.speed}</span>
+          </div>
+          <div className="progress-track">
+            <div className="progress-fill" style={{ width: `${dl.progress}%` }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Model List / Load Section ────────────────────────────
+function ModelSection() {
+  const modelsData = usePoll("/api/models", 3000);
+  const serverStatus = usePoll("/api/server/status", 2000);
+
+  const [selected, setSelected] = useState("");
+  const [ngl, setNgl] = useState(-1);
+  const [ctx, setCtx] = useState(4096);
+  const [npar, setNpar] = useState(1);
+  const [port, setPort] = useState(8080);
+
+  const models = modelsData?.models || [];
+  const isRunning = serverStatus?.status === "running" || serverStatus?.status === "starting";
+  const selectedModel = models.find(m => m.filename === selected);
+
+  // Auto-select first model (or first with saved settings) on initial load
+  const initRef = useRef(false);
+  useEffect(() => {
+    if (initRef.current || models.length === 0) return;
+    const preferred = models.find(m => m.settings) || models[0];
+    setSelected(preferred.filename);
+    if (preferred.settings) {
+      const s = preferred.settings;
+      if (s.n_gpu_layers !== undefined) setNgl(s.n_gpu_layers);
+      if (s.ctx_size !== undefined) setCtx(s.ctx_size);
+      if (s.n_parallel !== undefined) setNpar(s.n_parallel);
+      if (s.port !== undefined) setPort(s.port);
+    }
+    initRef.current = true;
+  }, [models]);
+
+  // When dropdown selection changes, apply saved settings
+  const handleSelect = (filename) => {
+    setSelected(filename);
+    const model = models.find(m => m.filename === filename);
+    if (model?.settings) {
+      const s = model.settings;
+      if (s.n_gpu_layers !== undefined) setNgl(s.n_gpu_layers);
+      if (s.ctx_size !== undefined) setCtx(s.ctx_size);
+      if (s.n_parallel !== undefined) setNpar(s.n_parallel);
+      if (s.port !== undefined) setPort(s.port);
+    }
+  };
+
+  const handleLoad = () => {
+    if (!selectedModel) return;
+    api.post("/api/server/start", {
+      model_path: selectedModel.path,
+      port,
+      n_gpu_layers: ngl,
+      ctx_size: ctx,
+      n_parallel: npar,
+    }).catch(e => alert(e.message));
+  };
+
+  const handleStop = () => {
+    api.post("/api/server/stop").catch(e => alert(e.message));
+  };
+
+  const handleDelete = () => {
+    if (!selectedModel) return;
+    if (confirm(`Delete ${selectedModel.filename}?`)) {
+      api.del(`/api/models/${selectedModel.filename}`).then(() => {
+        setSelected(models.length > 1 ? models.find(m => m.filename !== selectedModel.filename)?.filename || "" : "");
+      });
+    }
+  };
+
+  const dotClass = {
+    stopped: "dot-idle", starting: "dot-spin", running: "dot-ok", error: "dot-err"
+  }[serverStatus?.status] || "dot-idle";
+
+  return (
+    <div className="card">
+      <div className="card-title">
+        <span className={`dot ${dotClass}`} />
+        Inference Server
+        {serverStatus?.status === "running" && (
+          <span style={{ marginLeft: "auto", fontSize: "0.68rem", color: "var(--green)", fontFamily: "var(--font-mono)" }}>
+            ● LIVE
+          </span>
+        )}
+      </div>
+
+      {/* Model selector + params (when not running) */}
+      {!isRunning && (
+        <>
+          <div style={{ marginBottom: "1rem" }}>
+            <label style={{ display: "block", fontSize: "0.68rem", fontFamily: "var(--font-mono)", color: "var(--text-2)", letterSpacing: "0.05em", textTransform: "uppercase", marginBottom: "0.25rem" }}>
+              Model
+            </label>
+            {models.length === 0 ? (
+              <div style={{ fontSize: "0.82rem", color: "var(--text-2)", padding: "0.5rem 0" }}>
+                No models yet. Download one above.
+              </div>
+            ) : (
+              <select value={selected} onChange={e => handleSelect(e.target.value)}>
+                {models.map(m => (
+                  <option key={m.filename} value={m.filename}>
+                    {m.filename}  ({m.size_human}){m.settings ? " ★" : ""}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+
+          <div className="params-grid">
+            <div>
+              <label>GPU Layers (-1=all)</label>
+              <input type="number" value={ngl} onChange={e => setNgl(+e.target.value)} />
+            </div>
+            <div>
+              <label>Context Size</label>
+              <input type="number" value={ctx} onChange={e => setCtx(+e.target.value)} />
+            </div>
+            <div>
+              <label>Parallel Slots</label>
+              <input type="number" value={npar} onChange={e => setNpar(+e.target.value)} min={1} />
+            </div>
+            <div>
+              <label>Port</label>
+              <input type="number" value={port} onChange={e => setPort(+e.target.value)} />
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: "0.5rem" }}>
+            <button className="btn-primary" onClick={handleLoad} disabled={!selectedModel}>
+              Load Model
+            </button>
+            {selectedModel && (
+              <button className="btn-danger btn-sm" onClick={handleDelete}>
+                Delete
+              </button>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* Running server info */}
+      {isRunning && serverStatus && (
+        <>
+          <div className="info-row">
+            <div className="info-item">
+              <label>Status</label>
+              <span>{serverStatus.status}</span>
+            </div>
+            <div className="info-item">
+              <label>Model</label>
+              <span>{serverStatus.model}</span>
+            </div>
+            <div className="info-item">
+              <label>Port</label>
+              <span>{serverStatus.port}</span>
+            </div>
+            <div className="info-item">
+              <label>PID</label>
+              <span>{serverStatus.pid}</span>
+            </div>
+          </div>
+
+          <button className="btn-danger" onClick={handleStop}>
+            Stop Server
+          </button>
+
+          {serverStatus.status === "running" && (
+            <div className="endpoint-banner">
+              <code>http://localhost:{serverStatus.port}/v1/chat/completions</code>
+              <p>
+                OpenAI-compatible endpoint ready.
+                Use with any client — <code>base_url=http://localhost:{serverStatus.port}/v1</code>
+              </p>
+            </div>
+          )}
+
+          {serverStatus.status === "starting" && (
+            <div style={{ marginTop: "0.75rem", fontFamily: "var(--font-mono)", fontSize: "0.75rem", color: "var(--accent)" }}>
+              Loading model into memory…
+            </div>
+          )}
+
+          {serverStatus.error && (
+            <div style={{ marginTop: "0.75rem", fontFamily: "var(--font-mono)", fontSize: "0.75rem", color: "var(--red)" }}>
+              Error: {serverStatus.error}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── App ──────────────────────────────────────────────────
+function App() {
+  return (
+    <>
+      <div className="header">
+        <h1>LlamaForge</h1>
+        <span className="version">v1.0</span>
+      </div>
+      <BuildSection />
+      <DownloadSection />
+      <ModelSection />
+    </>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
