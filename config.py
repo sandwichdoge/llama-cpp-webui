@@ -1,6 +1,7 @@
 """Paths and configuration for llama-cpp-webui."""
 
 import os
+import sys
 from pathlib import Path
 
 
@@ -25,7 +26,17 @@ def get_build_log_path() -> Path:
 
 
 def get_server_binary() -> Path:
-    return get_llama_cpp_dir() / "build" / "bin" / "llama-server"
+    suffix = ".exe" if sys.platform == "win32" else ""
+    build_bin = get_llama_cpp_dir() / "build" / "bin"
+    # MSVC multi-config generators place the binary under a Release/ subdir;
+    # Ninja / MinGW Makefiles use a flat layout.  Check both.
+    for candidate in [
+        build_bin / f"llama-server{suffix}",
+        build_bin / "Release" / f"llama-server{suffix}",
+    ]:
+        if candidate.is_file():
+            return candidate
+    return build_bin / f"llama-server{suffix}"  # not yet built — return expected path
 
 
 def get_settings_path() -> Path:

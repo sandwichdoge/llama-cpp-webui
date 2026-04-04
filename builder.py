@@ -4,6 +4,7 @@ import asyncio
 import datetime
 import json
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -44,6 +45,16 @@ def _detect_cmake_flags() -> list[str]:
     """Detect available hardware acceleration and return cmake flags."""
     flags = ["-DLLAMA_CURL=OFF"]  # we handle downloads ourselves
 
+    # On Windows, force a single-config generator so the binary lands in
+    # build/bin/ (flat) rather than build/bin/Release/ (MSVC default).
+    # Prefer Ninja; fall back to NMake Makefiles.
+    if sys.platform == "win32":
+        try:
+            subprocess.check_output(["ninja", "--version"], stderr=subprocess.STDOUT)
+            flags += ["-G", "Ninja"]
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            flags += ["-G", "NMake Makefiles"]
+
     # Check for CUDA
     try:
         subprocess.check_output(["nvcc", "--version"], stderr=subprocess.STDOUT)
@@ -52,8 +63,8 @@ def _detect_cmake_flags() -> list[str]:
     except (FileNotFoundError, subprocess.CalledProcessError):
         pass
 
-    # Check for ROCm / HIP
-    if Path("/opt/rocm").exists():
+    # Check for ROCm / HIP (Linux only — ROCm is not supported on Windows)
+    if sys.platform != "win32" and Path("/opt/rocm").exists():
         flags.append("-DGGML_HIP=ON")
         return flags
 
@@ -85,7 +96,7 @@ def get_status() -> dict:
     return result
 
 
-async def build(pull_only: bool = False):
+async def build(pull_only: bool = False, gcc_flags: list[str] | None = None):
     """Clone/pull and build llama.cpp. Runs in background."""
     if _build_lock.locked():
         return  # already building
@@ -96,7 +107,7 @@ async def build(pull_only: bool = False):
                             finished_at=None, error=None)
 
         try:
-            await _run_build()
+            await _run_build(gcc_flags=gcc_flags or [])
             info = _get_git_info(get_llama_cpp_dir())
             _build_state.update(status="success", progress="Build complete ✓",
                                 finished_at=datetime.datetime.now().isoformat(), **info)
@@ -105,7 +116,35 @@ async def build(pull_only: bool = False):
                                 finished_at=datetime.datetime.now().isoformat())
 
 
-async def _run_build():
+# Allowed GCC/Clang optimization flags (whitelist for safety).
+# These are not applicable to MSVC on Windows.
+_ALLOWED_GCC_FLAGS = {
+    "-march=native",
+    "-mtune=native",
+    "-ffast-math",
+    "-O3",
+    "-flto",
+}
+
+
+def _build_gcc_flags_args(gcc_flags: list[str]) -> list[str]:
+    """Validate and convert gcc_flags list into cmake -DCMAKE_*_FLAGS args.
+
+    Returns an empty list on Windows because MSVC does not accept GCC flags.
+    """
+    if sys.platform == "win32":
+        return []
+    safe = [f for f in gcc_flags if f in _ALLOWED_GCC_FLAGS]
+    if not safe:
+        return []
+    flags_str = " ".join(safe)
+    return [
+        f"-DCMAKE_C_FLAGS={flags_str}",
+        f"-DCMAKE_CXX_FLAGS={flags_str}",
+    ]
+
+
+async def _run_build(gcc_flags: list[str] | None = None):
     repo_dir = get_llama_cpp_dir()
 
     # ── Clone or pull ───────────────────────────────────
@@ -122,10 +161,12 @@ async def _run_build():
     build_dir.mkdir(exist_ok=True)
 
     cmake_flags = _detect_cmake_flags()
-    _build_state["progress"] = f"Configuring… (flags: {' '.join(cmake_flags)})"
+    extra_flags = _build_gcc_flags_args(gcc_flags or [])
+    all_flags = cmake_flags + extra_flags
+    _build_state["progress"] = f"Configuring… (flags: {' '.join(all_flags)})"
 
     cmake_cmd = ["cmake", "-B", str(build_dir), "-S", str(repo_dir),
-                 "-DCMAKE_BUILD_TYPE=Release"] + cmake_flags
+                 "-DCMAKE_BUILD_TYPE=Release"] + all_flags
     await _exec(cmake_cmd)
 
     # ── Build ────────────────────────────────────────────

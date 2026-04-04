@@ -50,6 +50,9 @@ def _get_model_settings(filename: str) -> dict | None:
 
 # ── Request schemas ──────────────────────────────────────
 
+class BuildRequest(BaseModel):
+    gcc_flags: list[str] = []
+
 class DownloadRequest(BaseModel):
     url: str
 
@@ -88,11 +91,11 @@ async def build_status():
     return builder.get_status()
 
 @app.post("/api/build/start")
-async def build_start():
+async def build_start(req: BuildRequest = BuildRequest()):
     status = builder.get_status()
     if status["status"] == "building":
         raise HTTPException(409, "Build already in progress")
-    asyncio.create_task(builder.build())
+    asyncio.create_task(builder.build(gcc_flags=req.gcc_flags))
     return {"message": "Build started"}
 
 

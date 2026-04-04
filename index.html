@@ -367,9 +367,18 @@ function useFetch(url, intervalMs = 1500) {
 }
 
 // ── Build Section ────────────────────────────────────────
+const GCC_FLAG_OPTIONS = [
+  { flag: "-march=native", label: "march=native", title: "Optimize for the host CPU instruction set (enables AVX2/AVX512 etc.)" },
+  { flag: "-mtune=native", label: "mtune=native", title: "Tune scheduling for the host CPU microarchitecture" },
+  { flag: "-O3",           label: "O3",           title: "Aggressive optimization level (may increase compile time)" },
+  { flag: "-ffast-math",   label: "fast-math",    title: "Allow approximate floating-point math; improves vectorization" },
+  { flag: "-flto",         label: "LTO",          title: "Link Time Optimization: whole-program optimization across translation units" },
+];
+
 function BuildSection() {
   const { data: status, refresh, setPolling } = useFetch("/api/build/status");
   const [showLog, setShowLog] = useState(false);
+  const [gccFlags, setGccFlags] = useState({ "-march=native": true, "-mtune=native": true });
 
   // Poll only while building
   useEffect(() => {
@@ -383,8 +392,11 @@ function BuildSection() {
     idle: "dot-idle", building: "dot-spin", success: "dot-ok", failed: "dot-err"
   }[status.status] || "dot-idle";
 
+  const toggleFlag = (flag) => setGccFlags(prev => ({ ...prev, [flag]: !prev[flag] }));
+
   const handleBuild = () => {
-    api.post("/api/build/start")
+    const selectedFlags = Object.entries(gccFlags).filter(([, on]) => on).map(([f]) => f);
+    api.post("/api/build/start", { gcc_flags: selectedFlags })
       .then(() => { setPolling(true); refresh(); })
       .catch(e => alert(e.message));
   };
@@ -416,6 +428,37 @@ function BuildSection() {
         <div className="info-item">
           <label>Binary</label>
           <span>{status.binary_exists ? "✓ ready" : "✗ not built"}</span>
+        </div>
+      </div>
+
+      <div style={{ marginBottom: "0.85rem" }}>
+        <div style={{ fontFamily: "var(--font-mono)", fontSize: "0.68rem", color: "var(--text-2)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "0.45rem" }}>
+          GCC Optimization Flags
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
+          {GCC_FLAG_OPTIONS.map(({ flag, label, title }) => {
+            const checked = !!gccFlags[flag];
+            return (
+              <label key={flag} title={title} style={{
+                display: "inline-flex", alignItems: "center", gap: "0.3rem",
+                fontFamily: "var(--font-mono)", fontSize: "0.75rem",
+                padding: "0.25rem 0.6rem",
+                border: `1px solid ${checked ? "var(--accent)" : "var(--border)"}`,
+                borderRadius: "4px",
+                background: checked ? "var(--accent-glow)" : "var(--bg-2)",
+                color: checked ? "var(--accent)" : "var(--text-2)",
+                cursor: isBuilding ? "not-allowed" : "pointer",
+                opacity: isBuilding ? 0.5 : 1,
+                userSelect: "none",
+                transition: "all 0.15s ease",
+              }}>
+                <input type="checkbox" checked={checked} disabled={isBuilding}
+                  onChange={() => toggleFlag(flag)}
+                  style={{ display: "none" }} />
+                {label}
+              </label>
+            );
+          })}
         </div>
       </div>
 
