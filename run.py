@@ -33,8 +33,8 @@ def main():
         os.environ["LLAMA_CPP_WEBUI_DATA_DIR"] = args.data_dir
 
     print(f"\n  ╔══════════════════════════════════════════╗")
-    print(f"  ║       llama-cpp-webui v1.0                ║")
-    print(f"  ║   llama.cpp build & serve manager         ║")
+    print(f"  ║       llama-cpp-webui v1.0               ║")
+    print(f"  ║   llama.cpp build & serve manager        ║")
     print(f"  ╚══════════════════════════════════════════╝\n")
     print(f"  → Management UI:  http://{args.host}:{args.port}")
     print(f"  → Inference API:  (shown after model load)\n")
