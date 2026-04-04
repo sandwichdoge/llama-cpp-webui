@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>LlamaForge</title>
+<title>llama-cpp-webui</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
 <style>
@@ -332,23 +332,42 @@ const api = {
   del: (path) => fetch(path, { method: "DELETE" }).then(r => r.json()),
 };
 
-// ── Hook: poll endpoint ──────────────────────────────────
-function usePoll(url, intervalMs = 2000) {
+// ── Hook: fetch once, poll only when active ──────────────
+function useFetch(url, intervalMs = 1500) {
   const [data, setData] = useState(null);
+  const [polling, setPolling] = useState(false);
+  const activeRef = useRef(true);
+
+  const refresh = useCallback(() => {
+    return api.get(url).then(d => { if (activeRef.current) setData(d); return d; }).catch(() => null);
+  }, [url]);
+
+  // Fetch once on mount
   useEffect(() => {
-    let active = true;
-    const poll = () => api.get(url).then(d => active && setData(d)).catch(() => {});
-    poll();
-    const id = setInterval(poll, intervalMs);
-    return () => { active = false; clearInterval(id); };
-  }, [url, intervalMs]);
-  return data;
+    activeRef.current = true;
+    refresh();
+    return () => { activeRef.current = false; };
+  }, [refresh]);
+
+  // Conditional polling — only when setPolling(true)
+  useEffect(() => {
+    if (!polling) return;
+    const id = setInterval(refresh, intervalMs);
+    return () => clearInterval(id);
+  }, [polling, refresh, intervalMs]);
+
+  return { data, refresh, setPolling };
 }
 
 // ── Build Section ────────────────────────────────────────
 function BuildSection() {
-  const status = usePoll("/api/build/status", 1500);
+  const { data: status, refresh, setPolling } = useFetch("/api/build/status");
   const [showLog, setShowLog] = useState(false);
+
+  // Poll only while building
+  useEffect(() => {
+    setPolling(status?.status === "building");
+  }, [status?.status]);
 
   if (!status) return null;
 
@@ -358,7 +377,9 @@ function BuildSection() {
   }[status.status] || "dot-idle";
 
   const handleBuild = () => {
-    api.post("/api/build/start").catch(e => alert(e.message));
+    api.post("/api/build/start")
+      .then(() => { setPolling(true); refresh(); })
+      .catch(e => alert(e.message));
   };
 
   return (
@@ -422,18 +443,25 @@ function BuildSection() {
 }
 
 // ── Download Section ─────────────────────────────────────
-function DownloadSection({ onRefreshModels }) {
+function DownloadSection({ refreshModels }) {
   const [url, setUrl] = useState("");
   const [error, setError] = useState("");
-  const modelsData = usePoll("/api/models", 2000);
+  const { data: modelsData, refresh, setPolling } = useFetch("/api/models", 2000);
 
   const downloads = modelsData ? Object.values(modelsData.downloads).filter(d => d.status === "downloading") : [];
+
+  // Poll only while downloads are active
+  useEffect(() => {
+    setPolling(downloads.length > 0);
+    // When a download finishes, also refresh the model section
+    if (modelsData && downloads.length === 0) refreshModels?.();
+  }, [downloads.length]);
 
   const handleDownload = () => {
     setError("");
     if (!url.trim()) return;
     api.post("/api/models/download", { url: url.trim() })
-      .then(() => setUrl(""))
+      .then(() => { setUrl(""); setPolling(true); refresh(); })
       .catch(e => setError(e.message));
   };
 
@@ -444,7 +472,7 @@ function DownloadSection({ onRefreshModels }) {
   return (
     <div className="card">
       <div className="card-title">
-        <span className="dot dot-idle" />
+        <span className={`dot ${downloads.length > 0 ? "dot-spin" : "dot-idle"}`} />
         Download GGUF Models
       </div>
 
@@ -486,68 +514,94 @@ function DownloadSection({ onRefreshModels }) {
 }
 
 // ── Model List / Load Section ────────────────────────────
-function ModelSection() {
-  const modelsData = usePoll("/api/models", 3000);
-  const serverStatus = usePoll("/api/server/status", 2000);
+function ModelSection({ modelsRef }) {
+  const { data: modelsData, refresh: refreshModels } = useFetch("/api/models");
+  const { data: serverStatus, refresh: refreshServer, setPolling } = useFetch("/api/server/status");
+
+  useEffect(() => { if (modelsRef) modelsRef.current = refreshModels; }, [refreshModels]);
 
   const [selected, setSelected] = useState("");
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
+  // Basic params
   const [ngl, setNgl] = useState(-1);
   const [ctx, setCtx] = useState(4096);
   const [npar, setNpar] = useState(1);
   const [port, setPort] = useState(8080);
 
+  // Advanced / MoE params
+  const [flashAttn, setFlashAttn] = useState("auto");
+  const [batch, setBatch] = useState(2048);
+  const [ubatch, setUbatch] = useState(512);
+  const [cpuMoe, setCpuMoe] = useState(false);
+  const [nCpuMoe, setNCpuMoe] = useState(0);
+  const [cacheK, setCacheK] = useState("f16");
+  const [cacheV, setCacheV] = useState("f16");
+  const [tensorSplit, setTensorSplit] = useState("");
+  const [overrideTensor, setOverrideTensor] = useState("");
+
   const models = modelsData?.models || [];
   const isRunning = serverStatus?.status === "running" || serverStatus?.status === "starting";
   const selectedModel = models.find(m => m.filename === selected);
 
-  // Auto-select first model (or first with saved settings) on initial load
+  useEffect(() => {
+    setPolling(serverStatus?.status === "starting");
+  }, [serverStatus?.status]);
+
+  const applySettings = (s) => {
+    if (!s) return;
+    if (s.n_gpu_layers !== undefined) setNgl(s.n_gpu_layers);
+    if (s.ctx_size !== undefined) setCtx(s.ctx_size);
+    if (s.n_parallel !== undefined) setNpar(s.n_parallel);
+    if (s.port !== undefined) setPort(s.port);
+    if (s.flash_attn !== undefined) setFlashAttn(s.flash_attn);
+    if (s.batch_size !== undefined) setBatch(s.batch_size);
+    if (s.ubatch_size !== undefined) setUbatch(s.ubatch_size);
+    if (s.cpu_moe !== undefined) setCpuMoe(s.cpu_moe);
+    if (s.n_cpu_moe !== undefined) setNCpuMoe(s.n_cpu_moe);
+    if (s.cache_type_k !== undefined) setCacheK(s.cache_type_k);
+    if (s.cache_type_v !== undefined) setCacheV(s.cache_type_v);
+    if (s.tensor_split !== undefined) setTensorSplit(s.tensor_split);
+    if (s.override_tensor !== undefined) setOverrideTensor(s.override_tensor);
+  };
+
   const initRef = useRef(false);
   useEffect(() => {
     if (initRef.current || models.length === 0) return;
     const preferred = models.find(m => m.settings) || models[0];
     setSelected(preferred.filename);
-    if (preferred.settings) {
-      const s = preferred.settings;
-      if (s.n_gpu_layers !== undefined) setNgl(s.n_gpu_layers);
-      if (s.ctx_size !== undefined) setCtx(s.ctx_size);
-      if (s.n_parallel !== undefined) setNpar(s.n_parallel);
-      if (s.port !== undefined) setPort(s.port);
-    }
+    applySettings(preferred.settings);
     initRef.current = true;
   }, [models]);
 
-  // When dropdown selection changes, apply saved settings
   const handleSelect = (filename) => {
     setSelected(filename);
     const model = models.find(m => m.filename === filename);
-    if (model?.settings) {
-      const s = model.settings;
-      if (s.n_gpu_layers !== undefined) setNgl(s.n_gpu_layers);
-      if (s.ctx_size !== undefined) setCtx(s.ctx_size);
-      if (s.n_parallel !== undefined) setNpar(s.n_parallel);
-      if (s.port !== undefined) setPort(s.port);
-    }
+    applySettings(model?.settings);
   };
 
   const handleLoad = () => {
     if (!selectedModel) return;
     api.post("/api/server/start", {
       model_path: selectedModel.path,
-      port,
-      n_gpu_layers: ngl,
-      ctx_size: ctx,
-      n_parallel: npar,
-    }).catch(e => alert(e.message));
+      port, n_gpu_layers: ngl, ctx_size: ctx, n_parallel: npar,
+      flash_attn: flashAttn, batch_size: batch, ubatch_size: ubatch,
+      cpu_moe: cpuMoe, n_cpu_moe: nCpuMoe,
+      cache_type_k: cacheK, cache_type_v: cacheV,
+      tensor_split: tensorSplit, override_tensor: overrideTensor,
+    }).then(() => { setPolling(true); refreshServer(); })
+      .catch(e => alert(e.message));
   };
 
   const handleStop = () => {
-    api.post("/api/server/stop").catch(e => alert(e.message));
+    api.post("/api/server/stop").then(refreshServer).catch(e => alert(e.message));
   };
 
   const handleDelete = () => {
     if (!selectedModel) return;
     if (confirm(`Delete ${selectedModel.filename}?`)) {
       api.del(`/api/models/${selectedModel.filename}`).then(() => {
+        refreshModels();
         setSelected(models.length > 1 ? models.find(m => m.filename !== selectedModel.filename)?.filename || "" : "");
       });
     }
@@ -556,6 +610,8 @@ function ModelSection() {
   const dotClass = {
     stopped: "dot-idle", starting: "dot-spin", running: "dot-ok", error: "dot-err"
   }[serverStatus?.status] || "dot-idle";
+
+  const kvTypes = ["f16", "bf16", "q8_0", "q4_0", "q4_1", "q5_0", "q5_1"];
 
   return (
     <div className="card">
@@ -569,7 +625,6 @@ function ModelSection() {
         )}
       </div>
 
-      {/* Model selector + params (when not running) */}
       {!isRunning && (
         <>
           <div style={{ marginBottom: "1rem" }}>
@@ -584,7 +639,7 @@ function ModelSection() {
               <select value={selected} onChange={e => handleSelect(e.target.value)}>
                 {models.map(m => (
                   <option key={m.filename} value={m.filename}>
-                    {m.filename}  ({m.size_human}){m.settings ? " ★" : ""}
+                    {m.filename}  ({m.size_human}){m.settings ? " \u2605" : ""}
                   </option>
                 ))}
               </select>
@@ -610,6 +665,81 @@ function ModelSection() {
             </div>
           </div>
 
+          <div
+            onClick={() => setShowAdvanced(v => !v)}
+            style={{ cursor: "pointer", fontSize: "0.72rem", fontFamily: "var(--font-mono)", color: "var(--text-2)", marginBottom: showAdvanced ? "0.75rem" : "1rem", userSelect: "none", letterSpacing: "0.05em" }}
+          >
+            {showAdvanced ? "\u25BE" : "\u25B8"} ADVANCED
+          </div>
+
+          {showAdvanced && (
+            <>
+              <div className="params-grid">
+                <div>
+                  <label>Flash Attention</label>
+                  <select value={flashAttn} onChange={e => setFlashAttn(e.target.value)}>
+                    <option value="auto">auto</option>
+                    <option value="on">on</option>
+                    <option value="off">off</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Batch Size (-b)</label>
+                  <input type="number" value={batch} onChange={e => setBatch(+e.target.value)} />
+                </div>
+                <div>
+                  <label>Micro Batch (-ub)</label>
+                  <input type="number" value={ubatch} onChange={e => setUbatch(+e.target.value)} />
+                </div>
+              </div>
+
+              <div className="params-grid">
+                <div>
+                  <label>KV Cache K Type</label>
+                  <select value={cacheK} onChange={e => setCacheK(e.target.value)}>
+                    {kvTypes.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label>KV Cache V Type</label>
+                  <select value={cacheV} onChange={e => setCacheV(e.target.value)}>
+                    {kvTypes.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </div>
+                <div style={{ display: "flex", alignItems: "end", gap: "0.5rem", paddingBottom: "0.15rem" }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", cursor: "pointer", whiteSpace: "nowrap" }}>
+                    <input type="checkbox" checked={cpuMoe} onChange={e => setCpuMoe(e.target.checked)}
+                      style={{ width: "auto", accentColor: "var(--accent)" }} />
+                    <span style={{ fontSize: "0.72rem", fontFamily: "var(--font-mono)", color: "var(--text-1)" }}>ALL experts -> CPU</span>
+                  </label>
+                </div>
+              </div>
+
+              {!cpuMoe && (
+                <div className="params-grid" style={{ gridTemplateColumns: "1fr 2fr" }}>
+                  <div>
+                    <label>N CPU MoE Layers</label>
+                    <input type="number" value={nCpuMoe} onChange={e => setNCpuMoe(+e.target.value)} min={0}
+                      title="Keep MoE weights of the first N layers on CPU (0 = disabled)" />
+                  </div>
+                  <div>
+                    <label>Tensor Split (multi-GPU, e.g. 3,1)</label>
+                    <input type="text" value={tensorSplit} onChange={e => setTensorSplit(e.target.value)}
+                      placeholder="e.g. 3,1 for 75%/25% split" />
+                  </div>
+                </div>
+              )}
+
+              <div style={{ marginBottom: "1rem" }}>
+                <label style={{ display: "block", fontSize: "0.68rem", fontFamily: "var(--font-mono)", color: "var(--text-2)", letterSpacing: "0.05em", textTransform: "uppercase", marginBottom: "0.25rem" }}>
+                  Override Tensor (-ot, regex placement)
+                </label>
+                <input type="text" value={overrideTensor} onChange={e => setOverrideTensor(e.target.value)}
+                  placeholder='e.g. blk\.([0-9])\.=CUDA0,exps=CPU' />
+              </div>
+            </>
+          )}
+
           <div style={{ display: "flex", gap: "0.5rem" }}>
             <button className="btn-primary" onClick={handleLoad} disabled={!selectedModel}>
               Load Model
@@ -623,7 +753,6 @@ function ModelSection() {
         </>
       )}
 
-      {/* Running server info */}
       {isRunning && serverStatus && (
         <>
           <div className="info-row">
@@ -654,14 +783,14 @@ function ModelSection() {
               <code>http://localhost:{serverStatus.port}/v1/chat/completions</code>
               <p>
                 OpenAI-compatible endpoint ready.
-                Use with any client — <code>base_url=http://localhost:{serverStatus.port}/v1</code>
+                Use with any client &mdash; <code>base_url=http://localhost:{serverStatus.port}/v1</code>
               </p>
             </div>
           )}
 
           {serverStatus.status === "starting" && (
             <div style={{ marginTop: "0.75rem", fontFamily: "var(--font-mono)", fontSize: "0.75rem", color: "var(--accent)" }}>
-              Loading model into memory…
+              Loading model into memory&hellip;
             </div>
           )}
 
@@ -678,15 +807,17 @@ function ModelSection() {
 
 // ── App ──────────────────────────────────────────────────
 function App() {
+  const modelsRefreshRef = useRef(null);
+
   return (
     <>
       <div className="header">
-        <h1>LlamaForge</h1>
+        <h1>llama-cpp-webui</h1>
         <span className="version">v1.0</span>
       </div>
       <BuildSection />
-      <DownloadSection />
-      <ModelSection />
+      <DownloadSection refreshModels={() => modelsRefreshRef.current?.()} />
+      <ModelSection modelsRef={modelsRefreshRef} />
     </>
   );
 }

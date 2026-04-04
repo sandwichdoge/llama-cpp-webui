@@ -30,7 +30,12 @@ def get_status() -> dict:
 
 
 async def start(model_path: str, port: int = 8080, n_gpu_layers: int = -1,
-                ctx_size: int = 4096, n_parallel: int = 1):
+                ctx_size: int = 4096, n_parallel: int = 1,
+                flash_attn: str = "auto", batch_size: int = 2048,
+                ubatch_size: int = 512, cpu_moe: bool = False,
+                n_cpu_moe: int = 0, cache_type_k: str = "f16",
+                cache_type_v: str = "f16", tensor_split: str = "",
+                override_tensor: str = ""):
     """Start llama-server with the given model."""
     global _process, _monitor_task
 
@@ -66,8 +71,27 @@ async def start(model_path: str, port: int = 8080, n_gpu_layers: int = -1,
         "-ngl", str(n_gpu_layers),
         "-c", str(ctx_size),
         "-np", str(n_parallel),
+        "-b", str(batch_size),
+        "-ub", str(ubatch_size),
+        "-fa", flash_attn,
+        "-ctk", cache_type_k,
+        "-ctv", cache_type_v,
         "--metrics",
     ]
+
+    # MoE offloading flags
+    if cpu_moe:
+        cmd += ["-cmoe"]
+    elif n_cpu_moe > 0:
+        cmd += ["-ncmoe", str(n_cpu_moe)]
+
+    # Multi-GPU tensor split
+    if tensor_split.strip():
+        cmd += ["-ts", tensor_split.strip()]
+
+    # Advanced tensor override (regex-based placement)
+    if override_tensor.strip():
+        cmd += ["-ot", override_tensor.strip()]
 
     try:
         _process = await asyncio.create_subprocess_exec(

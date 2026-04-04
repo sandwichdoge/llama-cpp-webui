@@ -1,4 +1,4 @@
-"""FastAPI management API for LlamaForge."""
+"""FastAPI management API for llama-cpp-webui."""
 
 import asyncio
 import json
@@ -12,7 +12,7 @@ from pydantic import BaseModel
 import builder, downloader, server
 from config import get_settings_path
 
-app = FastAPI(title="LlamaForge", version="1.0.0")
+app = FastAPI(title="llama-cpp-webui", version="1.0.0")
 
 
 # ── Settings persistence ────────────────────────────────
@@ -52,6 +52,16 @@ class LoadRequest(BaseModel):
     n_gpu_layers: int = -1
     ctx_size: int = 4096
     n_parallel: int = 1
+    # Advanced / MoE
+    flash_attn: str = "auto"
+    batch_size: int = 2048
+    ubatch_size: int = 512
+    cpu_moe: bool = False
+    n_cpu_moe: int = 0
+    cache_type_k: str = "f16"
+    cache_type_v: str = "f16"
+    tensor_split: str = ""
+    override_tensor: str = ""
 
 
 # ── UI ───────────────────────────────────────────────────
@@ -122,6 +132,15 @@ async def server_start(req: LoadRequest):
             n_gpu_layers=req.n_gpu_layers,
             ctx_size=req.ctx_size,
             n_parallel=req.n_parallel,
+            flash_attn=req.flash_attn,
+            batch_size=req.batch_size,
+            ubatch_size=req.ubatch_size,
+            cpu_moe=req.cpu_moe,
+            n_cpu_moe=req.n_cpu_moe,
+            cache_type_k=req.cache_type_k,
+            cache_type_v=req.cache_type_v,
+            tensor_split=req.tensor_split,
+            override_tensor=req.override_tensor,
         )
     except (RuntimeError, FileNotFoundError) as e:
         raise HTTPException(400, str(e))
@@ -133,6 +152,15 @@ async def server_start(req: LoadRequest):
         "n_gpu_layers": req.n_gpu_layers,
         "ctx_size": req.ctx_size,
         "n_parallel": req.n_parallel,
+        "flash_attn": req.flash_attn,
+        "batch_size": req.batch_size,
+        "ubatch_size": req.ubatch_size,
+        "cpu_moe": req.cpu_moe,
+        "n_cpu_moe": req.n_cpu_moe,
+        "cache_type_k": req.cache_type_k,
+        "cache_type_v": req.cache_type_v,
+        "tensor_split": req.tensor_split,
+        "override_tensor": req.override_tensor,
     })
 
     return {"message": "Server starting…"}

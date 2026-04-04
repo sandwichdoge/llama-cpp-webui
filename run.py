@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""LlamaForge — a lightweight GUI manager for llama.cpp"""
+"""llama-cpp-webui — a lightweight GUI manager for llama.cpp"""
 
 import argparse
 import os
@@ -23,7 +23,7 @@ class PollFilter(logging.Filter):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="LlamaForge — llama.cpp Manager")
+    parser = argparse.ArgumentParser(description="llama-cpp-webui — llama.cpp Manager")
     parser.add_argument("--host", default="127.0.0.1", help="Management UI host (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=7800, help="Management UI port (default: 7800)")
     parser.add_argument("--data-dir", default=None, help="Directory for llama.cpp and models (default: ~/.llamaforge)")
@@ -33,7 +33,7 @@ def main():
         os.environ["LLAMAFORGE_DATA_DIR"] = args.data_dir
 
     print(f"\n  ╔══════════════════════════════════════════╗")
-    print(f"  ║        🔥 LlamaForge v1.0                ║")
+    print(f"  ║       llama-cpp-webui v1.0                ║")
     print(f"  ║   llama.cpp build & serve manager         ║")
     print(f"  ╚══════════════════════════════════════════╝\n")
     print(f"  → Management UI:  http://{args.host}:{args.port}")
