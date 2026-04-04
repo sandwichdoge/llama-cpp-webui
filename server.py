@@ -113,6 +113,7 @@ async def start(model_path: str, port: int = 8080, n_gpu_layers: int = -1,
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            cwd=str(binary.parent),
         )
         _state["pid"] = _process.pid
         _state["cmd"] = " ".join(cmd)

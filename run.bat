@@ -10,9 +10,12 @@ set GIT_VER=2.47.1
 set CMAKE_VER=3.31.4
 set NINJA_VER=1.12.1
 set W64DEV_VER=2.0.0
+set CUDA_VER=12.6.3
+set VULKAN_VER=1.3.296.0
 
 set "TOOLS=%~dp0.tools"
 set INSTALLED_ANY=0
+set "GPU_CHOICE_FILE=%~dp0.gpu_choice"
 
 :: ── Try to activate an existing MSVC install ─────────────
 call :activate_msvc
@@ -32,7 +35,7 @@ if exist "%TOOLS%\cmake\bin"     set "PATH=%TOOLS%\cmake\bin;!PATH!"
 if exist "%TOOLS%\ninja"         set "PATH=%TOOLS%\ninja;!PATH!"
 if exist "%TOOLS%\w64devkit\bin" set "PATH=%TOOLS%\w64devkit\bin;!PATH!"
 
-:: Re-check MSVC — Build Tools may have just been installed
+:: Re-check MSVC, Build Tools may have just been installed
 call :activate_msvc
 
 :: ── Final verification ───────────────────────────────────
@@ -54,14 +57,8 @@ if not "!FAIL!"=="" (
     exit /b 1
 )
 
-:: ── GPU status (first run only) ──────────────────────────
-if not exist .venv (
-    where nvcc       >nul 2>&1 && echo   CUDA detected
-    where vulkaninfo >nul 2>&1 && echo   Vulkan detected
-    if not defined CUDA_PATH if not defined VULKAN_SDK (
-        echo   No GPU toolkit found ^(CUDA / Vulkan^) -- will build CPU-only
-    )
-)
+:: ── GPU selection & toolkit install ──────────────────────
+call :gpu_setup
 
 :: ── Virtual environment & run ────────────────────────────
 if not exist .venv (
@@ -80,12 +77,166 @@ exit /b 0
 ::                    S U B R O U T I N E S
 :: ══════════════════════════════════════════════════════════
 
+:: ──────────────────────────────────────────────────────────
+::  GPU setup, ask user once, remember the choice,
+::  then install the matching toolkit if needed.
+:: ──────────────────────────────────────────────────────────
+:gpu_setup
+    :: Load previous choice if it exists
+    if exist "!GPU_CHOICE_FILE!" (
+        set /p GPU_CHOICE=<"!GPU_CHOICE_FILE!"
+        goto :gpu_install
+    )
+
+    echo.
+    echo Select your GPU type
+    echo 
+    echo [1]  NVIDIA       (installs CUDA)
+    echo [2]  AMD          (installs Vulkan)
+    echo [3]  CPU/RAM only (no GPU toolkit)
+    echo.
+
+:gpu_prompt
+    set "GPU_CHOICE="
+    set /p "GPU_CHOICE=  Enter choice [1/2/3]: "
+    if "!GPU_CHOICE!"=="1" goto :gpu_save
+    if "!GPU_CHOICE!"=="2" goto :gpu_save
+    if "!GPU_CHOICE!"=="3" goto :gpu_save
+    echo   Invalid selection. Please enter 1, 2, or 3.
+    goto :gpu_prompt
+
+:gpu_save
+    :: Persist so we never ask again
+    echo !GPU_CHOICE!>"!GPU_CHOICE_FILE!"
+
+:gpu_install
+    if "!GPU_CHOICE!"=="1" call :install_cuda
+    if "!GPU_CHOICE!"=="2" call :install_vulkan
+    if "!GPU_CHOICE!"=="3" (
+        echo   GPU mode: CPU/RAM only -- skipping GPU toolkit install.
+    )
+    goto :eof
+
+
+:: ──────────────────────────────────────────────────────────
+::  CUDA Toolkit   (network installer: admin required)
+:: ──────────────────────────────────────────────────────────
+:install_cuda
+    :: Skip if already installed
+    where nvcc >nul 2>&1 && (
+        echo   CUDA already available, skipping install.
+        goto :eof
+    )
+    if defined CUDA_PATH (
+        echo   CUDA_PATH set, skipping install.
+        goto :eof
+    )
+
+    echo.
+    echo   [GPU] Installing CUDA Toolkit %CUDA_VER% ...
+    echo         This requires admin privileges and may take 10-20 minutes.
+    echo.
+
+    :: Try winget first
+    where winget >nul 2>&1 || goto :install_cuda_curl
+    winget install -e --id Nvidia.CUDA -v %CUDA_VER% ^
+        --accept-source-agreements --accept-package-agreements -h
+    if !errorlevel! equ 0 (
+        echo         CUDA installed via winget.
+        set INSTALLED_ANY=1
+        call :refresh_path
+        goto :eof
+    )
+    echo         winget failed. Trying direct download...
+
+:install_cuda_curl
+    :: Network installer (~30 MB), downloads only selected components
+    set "CUDA_URL=https://developer.download.nvidia.com/compute/cuda/%CUDA_VER%/network_installers/cuda_%CUDA_VER%_windows_network.exe"
+    echo         Downloading CUDA network installer...
+    curl.exe -fSL --retry 3 -o "%TEMP%\cuda_setup.exe" "!CUDA_URL!"
+    if !errorlevel! neq 0 (
+        echo         Download failed.
+        echo         Install manually: https://developer.nvidia.com/cuda-downloads
+        goto :eof
+    )
+
+    echo         Running CUDA installer silently...
+    powershell -Command ^
+        "try { $p = Start-Process -FilePath '%TEMP%\cuda_setup.exe' -ArgumentList '-s' -Verb RunAs -Wait -PassThru; exit $p.ExitCode } catch { Write-Host '         UAC cancelled or elevation failed:' $_.Exception.Message; exit 1 }"
+    set "CUDA_EXIT=!errorlevel!"
+    del "%TEMP%\cuda_setup.exe" 2>nul
+
+    if !CUDA_EXIT! equ 0 (
+        echo         CUDA Toolkit installed successfully.
+        set INSTALLED_ANY=1
+        call :refresh_path
+    ) else (
+        echo         CUDA installer exited with code !CUDA_EXIT!.
+        echo         Install manually: https://developer.nvidia.com/cuda-downloads
+    )
+    goto :eof
+
+
+:: ──────────────────────────────────────────────────────────
+::  Vulkan SDK   (for AMD GPUs, admin required)
+:: ──────────────────────────────────────────────────────────
+:install_vulkan
+    :: Skip if already installed
+    where vulkaninfo >nul 2>&1 && (
+        echo   Vulkan SDK already available, skipping install.
+        goto :eof
+    )
+    if defined VULKAN_SDK (
+        echo   VULKAN_SDK set, skipping install.
+        goto :eof
+    )
+
+    echo.
+    echo   [GPU] Installing Vulkan SDK %VULKAN_VER% ...
+    echo         This requires admin privileges.
+    echo.
+
+    :: Try winget first
+    where winget >nul 2>&1 || goto :install_vulkan_curl
+    winget install -e --id KhronosGroup.VulkanSDK -v %VULKAN_VER% ^
+        --accept-source-agreements --accept-package-agreements -h
+    if !errorlevel! equ 0 (
+        echo         Vulkan SDK installed via winget.
+        set INSTALLED_ANY=1
+        call :refresh_path
+        goto :eof
+    )
+    echo         winget failed. Trying direct download...
+
+:install_vulkan_curl
+    set "VK_URL=https://sdk.lunarg.com/sdk/download/%VULKAN_VER%/windows/VulkanSDK-%VULKAN_VER%-Installer.exe"
+    echo         Downloading Vulkan SDK installer...
+    curl.exe -fSL --retry 3 -o "%TEMP%\vulkan_setup.exe" "!VK_URL!"
+    if !errorlevel! neq 0 (
+        echo         Download failed.
+        echo         Install manually: https://vulkan.lunarg.com/sdk/home
+        goto :eof
+    )
+
+    echo         Running Vulkan SDK installer silently...
+    powershell -Command ^
+        "try { $p = Start-Process -FilePath '%TEMP%\vulkan_setup.exe' -ArgumentList '/S' -Verb RunAs -Wait -PassThru; exit $p.ExitCode } catch { Write-Host '         UAC cancelled or elevation failed:' $_.Exception.Message; exit 1 }"
+    set "VK_EXIT=!errorlevel!"
+    del "%TEMP%\vulkan_setup.exe" 2>nul
+
+    if !VK_EXIT! equ 0 (
+        echo         Vulkan SDK installed successfully.
+        set INSTALLED_ANY=1
+        call :refresh_path
+    ) else (
+        echo         Vulkan installer exited with code !VK_EXIT!.
+        echo         Install manually: https://vulkan.lunarg.com/sdk/home
+    )
+    goto :eof
+
+
 :: ── Re-read PATH from the registry ──────────────────────
-::    Installers update the registry, but the current cmd
-::    session still has the old PATH.  This fixes that.
 :refresh_path
-    :: Append newly-installed paths to the session PATH.
-    :: (Duplicates are harmless; nuking the existing PATH is not.)
     for /f "tokens=2*" %%A in (
         'reg query "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment" /v Path 2^>nul'
     ) do set "PATH=!PATH!;%%B"
@@ -99,12 +250,10 @@ exit /b 0
     where cl >nul 2>&1 && goto :eof
     set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
     if not exist "!VSWHERE!" goto :eof
-    :: First try: only installations that have VC tools
     set "VSDIR="
     for /f "delims=" %%i in (
         '"!VSWHERE!" -latest -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath 2^>nul'
     ) do set "VSDIR=%%i"
-    :: Fallback: any VS/Build Tools installation (might have VC in a non-standard layout)
     if not defined VSDIR (
         for /f "delims=" %%i in (
             '"!VSWHERE!" -latest -products * -property installationPath 2^>nul'
@@ -119,7 +268,7 @@ exit /b 0
 
 
 :: ──────────────────────────────────────────────────────────
-::  Python   (per-user install — no admin required)
+::  Python
 :: ──────────────────────────────────────────────────────────
 :install_python
     echo.
@@ -142,7 +291,7 @@ exit /b 0
 
 
 :: ──────────────────────────────────────────────────────────
-::  Git   (system install — may trigger UAC prompt)
+::  Git
 :: ──────────────────────────────────────────────────────────
 :install_git
     echo.
@@ -165,7 +314,7 @@ exit /b 0
 
 
 :: ──────────────────────────────────────────────────────────
-::  CMake   (portable zip — no admin, no installer)
+::  CMake   (portable)
 :: ──────────────────────────────────────────────────────────
 :install_cmake
     echo.
@@ -181,7 +330,7 @@ exit /b 0
 
 
 :: ──────────────────────────────────────────────────────────
-::  Ninja   (portable zip — single exe, no admin)
+::  Ninja   (portable)
 :: ──────────────────────────────────────────────────────────
 :install_ninja
     echo.
@@ -197,15 +346,12 @@ exit /b 0
 
 :: ──────────────────────────────────────────────────────────
 ::  C++ Compiler
-::    Stage A:  Try VS Build Tools (--force to fix stale installs)
-::    Stage B:  Portable MinGW via w64devkit (no admin needed)
 :: ──────────────────────────────────────────────────────────
 :install_compiler
     echo.
     echo   [5/5] No C++ compiler found.
     echo.
 
-    :: ── Stage A: VS Build Tools ──────────────────────────
     echo         --- Stage A: Visual Studio Build Tools ---
     net session >nul 2>&1
     if !errorlevel! neq 0 (
@@ -258,7 +404,6 @@ exit /b 0
     echo               %TEMP%\dd_setup_*.log
     echo.
 
-    :: ── Stage B: Portable MinGW (w64devkit) ──────────────
 :install_compiler_mingw
     echo         --- Stage B: Portable MinGW ^(w64devkit %W64DEV_VER%^) ---
     echo         No admin needed. ~70 MB download.

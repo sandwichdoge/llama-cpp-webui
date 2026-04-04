@@ -40,6 +40,44 @@ def _get_git_info(repo_dir: Path) -> dict:
     except Exception:
         return {"commit": None, "commit_date": None}
 
+def _get_driver_cuda_version() -> tuple[int, int] | None:
+    """Return the max CUDA version the installed NVIDIA driver supports."""
+    try:
+        out = subprocess.check_output(
+            ["nvidia-smi", "--query-gpu=driver_version",
+             "--format=csv,noheader"],
+            stderr=subprocess.STDOUT, text=True,
+        ).strip()
+        # Parse the CUDA version from the nvidia-smi table header instead
+        table = subprocess.check_output(
+            ["nvidia-smi"], stderr=subprocess.STDOUT, text=True,
+        )
+        for line in table.splitlines():
+            if "CUDA Version:" in line:
+                # e.g. "| CUDA Version: 12.6     |"
+                part = line.split("CUDA Version:")[1].strip().rstrip("|").strip()
+                major, minor = part.split(".")
+                return int(major), int(minor)
+    except Exception:
+        pass
+    return None
+
+
+def _get_nvcc_version() -> tuple[int, int] | None:
+    """Return the installed CUDA toolkit version from nvcc."""
+    try:
+        out = subprocess.check_output(
+            ["nvcc", "--version"], stderr=subprocess.STDOUT, text=True,
+        )
+        for line in out.splitlines():
+            if "release" in line.lower():
+                # e.g. "Cuda compilation tools, release 13.0, V13.0.88"
+                part = line.split("release")[1].split(",")[0].strip()
+                major, minor = part.split(".")
+                return int(major), int(minor)
+    except Exception:
+        pass
+    return None
 
 def _detect_cmake_flags() -> list[str]:
     """Detect available hardware acceleration and return cmake flags."""
@@ -56,17 +94,44 @@ def _detect_cmake_flags() -> list[str]:
             flags += ["-G", "NMake Makefiles"]
 
     # Check for CUDA
+     # Check for CUDA
     try:
         subprocess.check_output(["nvcc", "--version"], stderr=subprocess.STDOUT)
+
+        # Verify driver supports the installed toolkit version
+        driver_cuda = _get_driver_cuda_version()
+        nvcc_ver = _get_nvcc_version()
+        if driver_cuda and nvcc_ver and nvcc_ver > driver_cuda:
+            raise RuntimeError(
+                f"CUDA toolkit {nvcc_ver[0]}.{nvcc_ver[1]} is installed, "
+                f"but your NVIDIA driver only supports up to CUDA "
+                f"{driver_cuda[0]}.{driver_cuda[1]}. "
+                f"Please update your NVIDIA driver or install CUDA "
+                f"{driver_cuda[0]}.{driver_cuda[1]} toolkit."
+            )
+
         flags.append("-DGGML_CUDA=ON")
-        return flags  # Prefer CUDA over others
+
+        # Detect GPU compute capability via nvidia-smi so we don't rely on
+        # CMake's "native" detection, which can fail on Windows.
+        try:
+            out = subprocess.check_output(
+                ["nvidia-smi", "--query-gpu=compute_cap", "--format=csv,noheader"],
+                stderr=subprocess.STDOUT, text=True,
+            )
+            # e.g. "8.6\n" or "8.9\n7.5\n" for multi-GPU — keep all unique
+            archs = sorted({line.strip().replace(".", "")
+                            for line in out.strip().splitlines() if line.strip()})
+            if archs:
+                flags.append(f"-DCMAKE_CUDA_ARCHITECTURES={';'.join(archs)}")
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            # nvidia-smi not available; fall back to "all" so at least
+            # common architectures are covered (slower build but works)
+            flags.append("-DCMAKE_CUDA_ARCHITECTURES=all")
+
+        return flags
     except (FileNotFoundError, subprocess.CalledProcessError):
         pass
-
-    # Check for ROCm / HIP (Linux only — ROCm is not supported on Windows)
-    if sys.platform != "win32" and Path("/opt/rocm").exists():
-        flags.append("-DGGML_HIP=ON")
-        return flags
 
     # Check for Vulkan SDK
     try:
