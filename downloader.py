@@ -15,15 +15,17 @@ _downloads: dict[str, dict] = {}
 
 
 def list_models() -> list[dict]:
-    """List all downloaded GGUF files with size info."""
+    """List all downloaded GGUF/mmproj files with size info."""
     models_dir = get_models_dir()
     models = []
-    for f in sorted(models_dir.glob("*.gguf")):
+    for f in sorted(list(models_dir.glob("*.gguf")) + list(models_dir.glob("*.bin"))):
+        name_lower = f.name.lower()
         models.append({
             "filename": f.name,
             "path": str(f),
             "size_bytes": f.stat().st_size,
             "size_human": _human_size(f.stat().st_size),
+            "is_mmproj": "mmproj" in name_lower,
         })
     return models
 
@@ -49,8 +51,8 @@ def parse_hf_url(url: str) -> tuple[str, str]:
     parsed = urlparse(url)
     filename = unquote(Path(parsed.path).name)
 
-    if not filename.endswith(".gguf"):
-        raise ValueError(f"URL does not point to a .gguf file: {filename}")
+    if not filename.endswith((".gguf", ".bin")):
+        raise ValueError(f"URL does not point to a .gguf or .bin file: {filename}")
 
     return url, filename
 
@@ -104,7 +106,7 @@ async def download_model(url: str) -> str:
 
 async def _download_file(url: str, dest: Path, filename: str):
     """Download with progress tracking."""
-    tmp = dest.with_suffix(".gguf.part")
+    tmp = dest.parent / (dest.name + ".part")
 
     async with httpx.AsyncClient(follow_redirects=True, timeout=httpx.Timeout(30, read=300)) as client:
         async with client.stream("GET", url) as resp:
@@ -140,7 +142,7 @@ async def _download_file(url: str, dest: Path, filename: str):
 def delete_model(filename: str) -> bool:
     """Delete a downloaded model file."""
     path = get_models_dir() / filename
-    if path.exists() and path.suffix == ".gguf":
+    if path.exists() and path.suffix in (".gguf", ".bin"):
         path.unlink()
         return True
     return False

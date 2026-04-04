@@ -19,18 +19,26 @@ _state = {
     "error": None,
     "params": {},              # launch params
     "started_at": None,
+    "cmd": "",                 # the exact command launched
+    "log": "",                 # last N lines of server output
 }
 
 _process: asyncio.subprocess.Process | None = None
 _monitor_task: asyncio.Task | None = None
+_log_task: asyncio.Task | None = None
+_log_lines: list[str] = []
+_LOG_MAX = 150
 
 
 def get_status() -> dict:
-    return dict(_state)
+    result = dict(_state)
+    result["log"] = "\n".join(_log_lines[-_LOG_MAX:])
+    return result
 
 
 async def start(model_path: str, port: int = 8080, n_gpu_layers: int = -1,
                 ctx_size: int = 4096, n_parallel: int = 1,
+                mmproj: str = "",
                 flash_attn: str = "auto", batch_size: int = 2048,
                 ubatch_size: int = 512, cpu_moe: bool = False,
                 n_cpu_moe: int = 0, cache_type_k: str = "f16",
@@ -76,6 +84,7 @@ async def start(model_path: str, port: int = 8080, n_gpu_layers: int = -1,
         "-fa", flash_attn,
         "-ctk", cache_type_k,
         "-ctv", cache_type_v,
+        "--jinja",
         "--metrics",
     ]
 
@@ -84,6 +93,12 @@ async def start(model_path: str, port: int = 8080, n_gpu_layers: int = -1,
         cmd += ["-cmoe"]
     elif n_cpu_moe > 0:
         cmd += ["-ncmoe", str(n_cpu_moe)]
+
+    # Multimodal projection model
+    if mmproj.strip():
+        mmproj_path = Path(mmproj.strip())
+        if mmproj_path.is_file():
+            cmd += ["--mmproj", str(mmproj_path)]
 
     # Multi-GPU tensor split
     if tensor_split.strip():
@@ -100,8 +115,11 @@ async def start(model_path: str, port: int = 8080, n_gpu_layers: int = -1,
             stderr=asyncio.subprocess.STDOUT,
         )
         _state["pid"] = _process.pid
+        _state["cmd"] = " ".join(cmd)
+        _log_lines.clear()
 
-        # Start background health-check monitor
+        # Start background log reader and health-check monitor
+        _log_task = asyncio.create_task(_log_reader())
         _monitor_task = asyncio.create_task(_health_monitor(port))
 
     except Exception as e:
@@ -111,11 +129,15 @@ async def start(model_path: str, port: int = 8080, n_gpu_layers: int = -1,
 
 async def stop():
     """Stop the running llama-server process."""
-    global _process, _monitor_task
+    global _process, _monitor_task, _log_task
 
     if _monitor_task:
         _monitor_task.cancel()
         _monitor_task = None
+
+    if _log_task:
+        _log_task.cancel()
+        _log_task = None
 
     if _process and _process.returncode is None:
         _process.terminate()
@@ -127,7 +149,22 @@ async def stop():
 
     _process = None
     _state.update(status="stopped", model=None, model_path=None, pid=None,
-                  error=None, started_at=None)
+                  error=None, started_at=None, cmd="")
+
+
+async def _log_reader():
+    """Read llama-server stdout and store in _log_lines."""
+    try:
+        while _process and _process.returncode is None:
+            line = await _process.stdout.readline()
+            if not line:
+                break
+            decoded = line.decode(errors="replace").rstrip()
+            _log_lines.append(decoded)
+            if len(_log_lines) > _LOG_MAX * 2:
+                del _log_lines[:_LOG_MAX]
+    except asyncio.CancelledError:
+        pass
 
 
 async def _health_monitor(port: int):

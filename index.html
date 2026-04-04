@@ -328,7 +328,14 @@ const api = {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: body ? JSON.stringify(body) : undefined,
-  }).then(r => { if (!r.ok) return r.json().then(e => { throw new Error(e.detail) }); return r.json(); }),
+  }).then(async r => {
+    if (!r.ok) {
+      let msg = `HTTP ${r.status}`;
+      try { const e = await r.json(); msg = e.detail || JSON.stringify(e); } catch { msg = await r.text() || msg; }
+      throw new Error(msg);
+    }
+    return r.json();
+  }),
   del: (path) => fetch(path, { method: "DELETE" }).then(r => r.json()),
 };
 
@@ -485,7 +492,7 @@ function DownloadSection({ refreshModels }) {
           onKeyDown={handleKeyDown}
           style={{ flex: 1 }}
         />
-        <button className="btn-primary" onClick={handleDownload}>Download</button>
+        <button className="btn-primary" onClick={handleDownload} disabled={downloads.length > 0} style={downloads.length > 0 ? { opacity: 0.45, cursor: "not-allowed", pointerEvents: "none" } : {}}>Download</button>
       </div>
 
       {error && (
@@ -495,8 +502,14 @@ function DownloadSection({ refreshModels }) {
       )}
 
       <div style={{ fontSize: "0.72rem", color: "var(--text-2)", marginBottom: "0.5rem" }}>
-        Paste a HuggingFace link to any .gguf file. Supports /resolve/ and /blob/ URLs.
+        Paste a HuggingFace link to any .gguf or .bin file (including mmproj). Supports /resolve/ and /blob/ URLs.
       </div>
+
+      {modelsData?.models_dir && (
+        <div style={{ fontSize: "0.68rem", fontFamily: "var(--font-mono)", color: "var(--text-2)", marginBottom: "0.5rem", opacity: 0.7 }}>
+          Models directory: {modelsData.models_dir}
+        </div>
+      )}
 
       {downloads.map(dl => (
         <div key={dl.filename} className="download-item">
@@ -522,6 +535,8 @@ function ModelSection({ modelsRef }) {
 
   const [selected, setSelected] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showLog, setShowLog] = useState(false);
+  const [showCmd, setShowCmd] = useState(false);
 
   // Basic params
   const [ngl, setNgl] = useState(-1);
@@ -539,44 +554,47 @@ function ModelSection({ modelsRef }) {
   const [cacheV, setCacheV] = useState("f16");
   const [tensorSplit, setTensorSplit] = useState("");
   const [overrideTensor, setOverrideTensor] = useState("");
+  const [mmproj, setMmproj] = useState("");
 
   const models = modelsData?.models || [];
+  const mainModels = models.filter(m => !m.is_mmproj);
   const isRunning = serverStatus?.status === "running" || serverStatus?.status === "starting";
-  const selectedModel = models.find(m => m.filename === selected);
+  const selectedModel = mainModels.find(m => m.filename === selected);
 
   useEffect(() => {
-    setPolling(serverStatus?.status === "starting");
-  }, [serverStatus?.status]);
+    setPolling(serverStatus?.status === "starting" || showLog);
+  }, [serverStatus?.status, showLog]);
 
   const applySettings = (s) => {
-    if (!s) return;
-    if (s.n_gpu_layers !== undefined) setNgl(s.n_gpu_layers);
-    if (s.ctx_size !== undefined) setCtx(s.ctx_size);
-    if (s.n_parallel !== undefined) setNpar(s.n_parallel);
-    if (s.port !== undefined) setPort(s.port);
-    if (s.flash_attn !== undefined) setFlashAttn(s.flash_attn);
-    if (s.batch_size !== undefined) setBatch(s.batch_size);
-    if (s.ubatch_size !== undefined) setUbatch(s.ubatch_size);
-    if (s.cpu_moe !== undefined) setCpuMoe(s.cpu_moe);
-    if (s.n_cpu_moe !== undefined) setNCpuMoe(s.n_cpu_moe);
-    if (s.cache_type_k !== undefined) setCacheK(s.cache_type_k);
-    if (s.cache_type_v !== undefined) setCacheV(s.cache_type_v);
-    if (s.tensor_split !== undefined) setTensorSplit(s.tensor_split);
-    if (s.override_tensor !== undefined) setOverrideTensor(s.override_tensor);
+    const d = s || {};
+    setNgl(d.n_gpu_layers ?? -1);
+    setCtx(d.ctx_size ?? 4096);
+    setNpar(d.n_parallel ?? 1);
+    setPort(d.port ?? 8080);
+    setFlashAttn(d.flash_attn ?? "auto");
+    setBatch(d.batch_size ?? 2048);
+    setUbatch(d.ubatch_size ?? 512);
+    setCpuMoe(d.cpu_moe ?? false);
+    setNCpuMoe(d.n_cpu_moe ?? 0);
+    setCacheK(d.cache_type_k ?? "f16");
+    setCacheV(d.cache_type_v ?? "f16");
+    setTensorSplit(d.tensor_split ?? "");
+    setOverrideTensor(d.override_tensor ?? "");
+    setMmproj(d.mmproj ?? "");
   };
 
   const initRef = useRef(false);
   useEffect(() => {
-    if (initRef.current || models.length === 0) return;
-    const preferred = models.find(m => m.settings) || models[0];
+    if (initRef.current || mainModels.length === 0) return;
+    const preferred = mainModels.find(m => m.settings) || mainModels[0];
     setSelected(preferred.filename);
     applySettings(preferred.settings);
     initRef.current = true;
-  }, [models]);
+  }, [mainModels.length]);
 
   const handleSelect = (filename) => {
     setSelected(filename);
-    const model = models.find(m => m.filename === filename);
+    const model = mainModels.find(m => m.filename === filename);
     applySettings(model?.settings);
   };
 
@@ -585,6 +603,7 @@ function ModelSection({ modelsRef }) {
     api.post("/api/server/start", {
       model_path: selectedModel.path,
       port, n_gpu_layers: ngl, ctx_size: ctx, n_parallel: npar,
+      mmproj,
       flash_attn: flashAttn, batch_size: batch, ubatch_size: ubatch,
       cpu_moe: cpuMoe, n_cpu_moe: nCpuMoe,
       cache_type_k: cacheK, cache_type_v: cacheV,
@@ -602,7 +621,7 @@ function ModelSection({ modelsRef }) {
     if (confirm(`Delete ${selectedModel.filename}?`)) {
       api.del(`/api/models/${selectedModel.filename}`).then(() => {
         refreshModels();
-        setSelected(models.length > 1 ? models.find(m => m.filename !== selectedModel.filename)?.filename || "" : "");
+        setSelected(mainModels.length > 1 ? mainModels.find(m => m.filename !== selectedModel.filename)?.filename || "" : "");
       });
     }
   };
@@ -631,13 +650,13 @@ function ModelSection({ modelsRef }) {
             <label style={{ display: "block", fontSize: "0.68rem", fontFamily: "var(--font-mono)", color: "var(--text-2)", letterSpacing: "0.05em", textTransform: "uppercase", marginBottom: "0.25rem" }}>
               Model
             </label>
-            {models.length === 0 ? (
+            {mainModels.length === 0 ? (
               <div style={{ fontSize: "0.82rem", color: "var(--text-2)", padding: "0.5rem 0" }}>
                 No models yet. Download one above.
               </div>
             ) : (
               <select value={selected} onChange={e => handleSelect(e.target.value)}>
-                {models.map(m => (
+                {mainModels.map(m => (
                   <option key={m.filename} value={m.filename}>
                     {m.filename}  ({m.size_human}){m.settings ? " \u2605" : ""}
                   </option>
@@ -645,6 +664,23 @@ function ModelSection({ modelsRef }) {
               </select>
             )}
           </div>
+
+          {/* mmproj selector — shown only when mmproj files exist */}
+          {models.some(m => m.is_mmproj) && (
+            <div style={{ marginBottom: "1rem" }}>
+              <label style={{ display: "block", fontSize: "0.68rem", fontFamily: "var(--font-mono)", color: "var(--text-2)", letterSpacing: "0.05em", textTransform: "uppercase", marginBottom: "0.25rem" }}>
+                Vision Projector (mmproj)
+              </label>
+              <select value={mmproj} onChange={e => setMmproj(e.target.value)}>
+                <option value="">None (text-only)</option>
+                {models.filter(m => m.is_mmproj).map(m => (
+                  <option key={m.filename} value={m.path}>
+                    {m.filename}  ({m.size_human})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <div className="params-grid">
             <div>
@@ -669,7 +705,7 @@ function ModelSection({ modelsRef }) {
             onClick={() => setShowAdvanced(v => !v)}
             style={{ cursor: "pointer", fontSize: "0.72rem", fontFamily: "var(--font-mono)", color: "var(--text-2)", marginBottom: showAdvanced ? "0.75rem" : "1rem", userSelect: "none", letterSpacing: "0.05em" }}
           >
-            {showAdvanced ? "\u25BE" : "\u25B8"} ADVANCED
+            {showAdvanced ? "\u25BE" : "\u25B8"} ADVANCED \u00B7 MOE / HYBRID
           </div>
 
           {showAdvanced && (
@@ -710,7 +746,7 @@ function ModelSection({ modelsRef }) {
                   <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", cursor: "pointer", whiteSpace: "nowrap" }}>
                     <input type="checkbox" checked={cpuMoe} onChange={e => setCpuMoe(e.target.checked)}
                       style={{ width: "auto", accentColor: "var(--accent)" }} />
-                    <span style={{ fontSize: "0.72rem", fontFamily: "var(--font-mono)", color: "var(--text-1)" }}>ALL experts -> CPU</span>
+                    <span style={{ fontSize: "0.72rem", fontFamily: "var(--font-mono)", color: "var(--text-1)" }}>ALL experts \u2192 CPU</span>
                   </label>
                 </div>
               </div>
@@ -774,9 +810,17 @@ function ModelSection({ modelsRef }) {
             </div>
           </div>
 
-          <button className="btn-danger" onClick={handleStop}>
-            Stop Server
-          </button>
+          <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
+            <button className="btn-danger" onClick={handleStop}>
+              Stop Server
+            </button>
+            <button className="btn-secondary btn-sm" onClick={() => { setShowLog(v => !v); if (!showLog) { setPolling(true); } }}>
+              {showLog ? "Hide Log" : "Show Log"}
+            </button>
+            <button className="btn-secondary btn-sm" onClick={() => setShowCmd(v => !v)}>
+              {showCmd ? "Hide Cmd" : "Show Cmd"}
+            </button>
+          </div>
 
           {serverStatus.status === "running" && (
             <div className="endpoint-banner">
@@ -797,6 +841,18 @@ function ModelSection({ modelsRef }) {
           {serverStatus.error && (
             <div style={{ marginTop: "0.75rem", fontFamily: "var(--font-mono)", fontSize: "0.75rem", color: "var(--red)" }}>
               Error: {serverStatus.error}
+            </div>
+          )}
+
+          {showCmd && serverStatus.cmd && (
+            <div className="log-box" style={{ marginTop: "0.75rem", maxHeight: "80px" }}>
+              {serverStatus.cmd}
+            </div>
+          )}
+
+          {showLog && (
+            <div className="log-box" style={{ marginTop: "0.75rem", maxHeight: "300px" }}>
+              {serverStatus.log || "(no output yet)"}
             </div>
           )}
         </>

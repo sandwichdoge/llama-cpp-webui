@@ -2,10 +2,11 @@
 
 import asyncio
 import json
+import traceback
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -13,6 +14,12 @@ import builder, downloader, server
 from config import get_settings_path
 
 app = FastAPI(title="llama-cpp-webui", version="1.0.0")
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Ensure all errors return JSON, never HTML tracebacks."""
+    return JSONResponse(status_code=500, content={"detail": str(exc)})
 
 
 # ── Settings persistence ────────────────────────────────
@@ -52,6 +59,8 @@ class LoadRequest(BaseModel):
     n_gpu_layers: int = -1
     ctx_size: int = 4096
     n_parallel: int = 1
+    # Multimodal
+    mmproj: str = ""
     # Advanced / MoE
     flash_attn: str = "auto"
     batch_size: int = 2048
@@ -97,6 +106,7 @@ async def list_models():
         m["settings"] = all_settings.get(m["filename"])
     return {
         "models": models,
+        "models_dir": str(downloader.get_models_dir()),
         "downloads": downloader.get_downloads(),
     }
 
@@ -132,6 +142,7 @@ async def server_start(req: LoadRequest):
             n_gpu_layers=req.n_gpu_layers,
             ctx_size=req.ctx_size,
             n_parallel=req.n_parallel,
+            mmproj=req.mmproj,
             flash_attn=req.flash_attn,
             batch_size=req.batch_size,
             ubatch_size=req.ubatch_size,
@@ -144,6 +155,8 @@ async def server_start(req: LoadRequest):
         )
     except (RuntimeError, FileNotFoundError) as e:
         raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"Unexpected error: {e}")
 
     # Persist settings for this model
     filename = Path(req.model_path).name
@@ -152,6 +165,7 @@ async def server_start(req: LoadRequest):
         "n_gpu_layers": req.n_gpu_layers,
         "ctx_size": req.ctx_size,
         "n_parallel": req.n_parallel,
+        "mmproj": req.mmproj,
         "flash_attn": req.flash_attn,
         "batch_size": req.batch_size,
         "ubatch_size": req.ubatch_size,
