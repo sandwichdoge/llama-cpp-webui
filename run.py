@@ -26,7 +26,7 @@ def main():
     parser = argparse.ArgumentParser(description="llama-cpp-webui — llama.cpp Manager")
     parser.add_argument("--host", default="127.0.0.1", help="Management UI host (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=7800, help="Management UI port (default: 7800)")
-    parser.add_argument("--data-dir", default=None, help="Directory for llama.cpp and models (default: ~/.llama-cpp-webui)")
+    parser.add_argument("--data-dir", default=None, help="Directory for llama.cpp and models (default: <app-dir>/data)")
     args = parser.parse_args()
 
     if args.data_dir:

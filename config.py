@@ -6,7 +6,8 @@ from pathlib import Path
 
 
 def get_data_dir() -> Path:
-    d = Path(os.environ.get("LLAMA_CPP_WEBUI_DATA_DIR", Path.home() / ".llama-cpp-webui"))
+    default = Path(__file__).parent / "data"
+    d = Path(os.environ.get("LLAMA_CPP_WEBUI_DATA_DIR", default))
     d.mkdir(parents=True, exist_ok=True)
     return d
 
