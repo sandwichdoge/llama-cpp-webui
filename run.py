@@ -26,11 +26,11 @@ def main():
     parser = argparse.ArgumentParser(description="llama-cpp-webui — llama.cpp Manager")
     parser.add_argument("--host", default="127.0.0.1", help="Management UI host (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=7800, help="Management UI port (default: 7800)")
-    parser.add_argument("--data-dir", default=None, help="Directory for llama.cpp and models (default: ~/.llamaforge)")
+    parser.add_argument("--data-dir", default=None, help="Directory for llama.cpp and models (default: ~/.llama-cpp-webui)")
     args = parser.parse_args()
 
     if args.data_dir:
-        os.environ["LLAMAFORGE_DATA_DIR"] = args.data_dir
+        os.environ["LLAMA_CPP_WEBUI_DATA_DIR"] = args.data_dir
 
     print(f"\n  ╔══════════════════════════════════════════╗")
     print(f"  ║       llama-cpp-webui v1.0                ║")

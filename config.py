@@ -1,11 +1,11 @@
-"""Paths and configuration for LlamaForge."""
+"""Paths and configuration for llama-cpp-webui."""
 
 import os
 from pathlib import Path
 
 
 def get_data_dir() -> Path:
-    d = Path(os.environ.get("LLAMAFORGE_DATA_DIR", Path.home() / ".llamaforge"))
+    d = Path(os.environ.get("LLAMA_CPP_WEBUI_DATA_DIR", Path.home() / ".llama-cpp-webui"))
     d.mkdir(parents=True, exist_ok=True)
     return d
 

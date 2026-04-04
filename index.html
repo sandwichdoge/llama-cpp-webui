@@ -705,7 +705,7 @@ function ModelSection({ modelsRef }) {
             onClick={() => setShowAdvanced(v => !v)}
             style={{ cursor: "pointer", fontSize: "0.72rem", fontFamily: "var(--font-mono)", color: "var(--text-2)", marginBottom: showAdvanced ? "0.75rem" : "1rem", userSelect: "none", letterSpacing: "0.05em" }}
           >
-            {showAdvanced ? "\u25BE" : "\u25B8"} ADVANCED \u00B7 MOE / HYBRID
+            {showAdvanced ? "\u25BE" : "\u25B8"} ADVANCED
           </div>
 
           {showAdvanced && (
@@ -746,7 +746,7 @@ function ModelSection({ modelsRef }) {
                   <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", cursor: "pointer", whiteSpace: "nowrap" }}>
                     <input type="checkbox" checked={cpuMoe} onChange={e => setCpuMoe(e.target.checked)}
                       style={{ width: "auto", accentColor: "var(--accent)" }} />
-                    <span style={{ fontSize: "0.72rem", fontFamily: "var(--font-mono)", color: "var(--text-1)" }}>ALL experts \u2192 CPU</span>
+                    <span style={{ fontSize: "0.72rem", fontFamily: "var(--font-mono)", color: "var(--text-1)" }}>ALL experts → CPU</span>
                   </label>
                 </div>
               </div>
