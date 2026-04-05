@@ -321,6 +321,24 @@
 <script type="text/babel">
 const { useState, useEffect, useRef, useCallback } = React;
 
+// ── VRAM estimator ───────────────────────────────────────
+const CACHE_BITS = { f16: 16, bf16: 16, q8_0: 8, q4_0: 4, q4_1: 4, q5_0: 5, q5_1: 5 };
+
+function estimateVram(meta, ngl, ctx, cacheK, cacheV) {
+  if (!meta) return null;
+  const { n_layers, n_kv_heads, embedding_dim, size_mb } = meta;
+  const cache_type = ((CACHE_BITS[cacheK] || 16) + (CACHE_BITS[cacheV] || 16)) / 2;
+  const gpu_layers = ngl === -1 ? n_layers : Math.min(Math.max(0, ngl), n_layers);
+  const size_per_layer = size_mb / n_layers;
+  const kv_cache_factor = n_kv_heads * cache_type * ctx;
+  const embedding_per_context = embedding_dim / ctx;
+  const vram =
+    (size_per_layer - 17.996 + 9.447e-06 * kv_cache_factor)
+    * (gpu_layers + Math.max(0.969, cache_type - (Math.floor(50.778 * embedding_per_context) + 9.988)))
+    + 1516.523;
+  return Math.max(0, vram);
+}
+
 // ── API helpers ──────────────────────────────────────────
 const api = {
   get: (path) => fetch(path).then(r => r.json()),
@@ -818,6 +836,15 @@ function ModelSection({ modelsRef }) {
               </div>
             </>
           )}
+
+          {(() => {
+            const vram = estimateVram(selectedModel?.meta, ngl, ctx, cacheK, cacheV);
+            return vram != null ? (
+              <div style={{ fontFamily: "var(--font-mono)", fontSize: "0.72rem", color: "var(--text-2)", marginBottom: "0.75rem" }}>
+                Estimated Memory Usage: <span style={{ color: "var(--accent)" }}>{(vram / 1024).toFixed(1)} GB</span>
+              </div>
+            ) : null;
+          })()}
 
           <div style={{ display: "flex", gap: "0.5rem" }}>
             <button className="btn-primary" onClick={handleLoad} disabled={!selectedModel}>

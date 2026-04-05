@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-import builder, downloader, server
+import builder, downloader, gguf_reader, server
 from config import get_settings_path
 
 app = FastAPI(title="llama-cpp-webui", version="1.0.0")
@@ -107,6 +107,8 @@ async def list_models():
     models = downloader.list_models()
     for m in models:
         m["settings"] = all_settings.get(m["filename"])
+        if not m["is_mmproj"]:
+            m["meta"] = gguf_reader.read_metadata(m["path"])
     return {
         "models": models,
         "models_dir": str(downloader.get_models_dir()),
