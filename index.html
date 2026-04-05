@@ -601,9 +601,9 @@ function ModelSection({ modelsRef }) {
 
   // Basic params
   const [ngl, setNgl] = useState(-1);
-  const [ctx, setCtx] = useState(4096);
+  const [ctx, setCtx] = useState(32768);
   const [npar, setNpar] = useState(1);
-  const [port, setPort] = useState(8080);
+  const [port, setPort] = useState(5000);
 
   // Advanced / MoE params
   const [flashAttn, setFlashAttn] = useState("auto");
@@ -631,7 +631,7 @@ function ModelSection({ modelsRef }) {
     setNgl(d.n_gpu_layers ?? -1);
     setCtx(d.ctx_size ?? 4096);
     setNpar(d.n_parallel ?? 1);
-    setPort(d.port ?? 8080);
+    setPort(d.port ?? 5000);
     setFlashAttn(d.flash_attn ?? "auto");
     setBatch(d.batch_size ?? 2048);
     setUbatch(d.ubatch_size ?? 512);

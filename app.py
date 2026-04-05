@@ -58,7 +58,7 @@ class DownloadRequest(BaseModel):
 
 class LoadRequest(BaseModel):
     model_path: str
-    port: int = 8080
+    port: int = 5000
     n_gpu_layers: int = -1
     ctx_size: int = 4096
     n_parallel: int = 1

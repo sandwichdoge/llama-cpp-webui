@@ -14,7 +14,7 @@ _state = {
     "status": "stopped",      # stopped | starting | running | error
     "model": None,             # loaded model filename
     "model_path": None,        # full path to model
-    "port": 8080,              # inference port
+    "port": 5000,              # inference port
     "pid": None,
     "error": None,
     "params": {},              # launch params
@@ -36,7 +36,7 @@ def get_status() -> dict:
     return result
 
 
-async def start(model_path: str, port: int = 8080, n_gpu_layers: int = -1,
+async def start(model_path: str, port: int = 85000080, n_gpu_layers: int = -1,
                 ctx_size: int = 4096, n_parallel: int = 1,
                 mmproj: str = "",
                 flash_attn: str = "auto", batch_size: int = 2048,
