@@ -1,4 +1,5 @@
 """FastAPI management API for llama-cpp-webui."""
+from __future__ import annotations
 
 import asyncio
 import json

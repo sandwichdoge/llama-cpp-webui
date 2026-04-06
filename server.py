@@ -1,4 +1,5 @@
 """Manage the llama-server inference process."""
+from __future__ import annotations
 
 import asyncio
 import signal

@@ -1,4 +1,5 @@
 """Read metadata from GGUF file headers (no tensors loaded)."""
+from __future__ import annotations
 
 import struct
 from pathlib import Path
