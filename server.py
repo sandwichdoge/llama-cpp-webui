@@ -165,6 +165,9 @@ async def _log_reader():
             _log_lines.append(decoded)
             if len(_log_lines) > _LOG_MAX * 2:
                 del _log_lines[:_LOG_MAX]
+            lower = decoded.lower()
+            if "cache" in lower and "hit" in lower:
+                print(f"[kv-cache hit] {decoded}", flush=True)
     except asyncio.CancelledError:
         pass
 
