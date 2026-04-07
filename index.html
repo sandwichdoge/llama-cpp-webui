@@ -629,7 +629,7 @@ function ModelSection({ modelsRef }) {
   const applySettings = (s) => {
     const d = s || {};
     setNgl(d.n_gpu_layers ?? -1);
-    setCtx(d.ctx_size ?? 4096);
+    setCtx(d.ctx_size ?? 32768);
     setNpar(d.n_parallel ?? 1);
     setPort(d.port ?? 5000);
     setFlashAttn(d.flash_attn ?? "auto");
@@ -656,7 +656,7 @@ function ModelSection({ modelsRef }) {
   const handleSelect = (filename) => {
     setSelected(filename);
     const model = mainModels.find(m => m.filename === filename);
-    applySettings(model?.settings);
+    if (model?.settings) applySettings(model.settings);
   };
 
   const handleLoad = () => {

@@ -61,7 +61,7 @@ class LoadRequest(BaseModel):
     model_path: str
     port: int = 5000
     n_gpu_layers: int = -1
-    ctx_size: int = 4096
+    ctx_size: int = 32768
     n_parallel: int = 1
     # Multimodal
     mmproj: str = ""
