@@ -615,6 +615,7 @@ function ModelSection({ modelsRef }) {
   const [cacheV, setCacheV] = useState("f16");
   const [tensorSplit, setTensorSplit] = useState("");
   const [overrideTensor, setOverrideTensor] = useState("");
+  const [extraArgs, setExtraArgs] = useState("");
   const [mmproj, setMmproj] = useState("");
 
   const models = modelsData?.models || [];
@@ -641,6 +642,7 @@ function ModelSection({ modelsRef }) {
     setCacheV(d.cache_type_v ?? "f16");
     setTensorSplit(d.tensor_split ?? "");
     setOverrideTensor(d.override_tensor ?? "");
+    setExtraArgs(d.extra_args ?? "");
     setMmproj(d.mmproj ?? "");
   };
 
@@ -669,6 +671,7 @@ function ModelSection({ modelsRef }) {
       cpu_moe: cpuMoe, n_cpu_moe: nCpuMoe,
       cache_type_k: cacheK, cache_type_v: cacheV,
       tensor_split: tensorSplit, override_tensor: overrideTensor,
+      extra_args: extraArgs,
     }).then(() => { setPolling(true); refreshServer(); })
       .catch(e => alert(e.message));
   };
@@ -833,6 +836,17 @@ function ModelSection({ modelsRef }) {
                 </label>
                 <input type="text" value={overrideTensor} onChange={e => setOverrideTensor(e.target.value)}
                   placeholder='e.g. blk\.([0-9])\.=CUDA0,exps=CPU' />
+              </div>
+
+              <div style={{ marginBottom: "1rem" }}>
+                <label style={{ display: "block", fontSize: "0.68rem", fontFamily: "var(--font-mono)", color: "var(--text-2)", letterSpacing: "0.05em", textTransform: "uppercase", marginBottom: "0.25rem" }}>
+                  Extra Command Line Arguments
+                </label>
+                <input type="text" value={extraArgs} onChange={e => setExtraArgs(e.target.value)}
+                  placeholder={"e.g. --chat-template-kwargs '{\"enable_thinking\": false}'"} />
+                <div style={{ fontSize: "0.65rem", color: "var(--text-2)", marginTop: "0.25rem" }}>
+                  Additional arguments passed directly to llama-server. Use shell‑quoting rules.
+                </div>
               </div>
             </>
           )}

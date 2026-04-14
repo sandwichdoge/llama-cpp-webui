@@ -75,6 +75,8 @@ class LoadRequest(BaseModel):
     cache_type_v: str = "f16"
     tensor_split: str = ""
     override_tensor: str = ""
+    # Extra command line arguments
+    extra_args: str = ""
 
 
 # ── UI ───────────────────────────────────────────────────
@@ -158,6 +160,7 @@ async def server_start(req: LoadRequest):
             cache_type_v=req.cache_type_v,
             tensor_split=req.tensor_split,
             override_tensor=req.override_tensor,
+            extra_args=req.extra_args,
         )
     except (RuntimeError, FileNotFoundError) as e:
         raise HTTPException(400, str(e))
@@ -181,6 +184,7 @@ async def server_start(req: LoadRequest):
         "cache_type_v": req.cache_type_v,
         "tensor_split": req.tensor_split,
         "override_tensor": req.override_tensor,
+        "extra_args": req.extra_args,
     })
 
     return {"message": "Server starting…"}

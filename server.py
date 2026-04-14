@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import shlex
 import signal
 import time
 from pathlib import Path
@@ -44,7 +45,7 @@ async def start(model_path: str, port: int = 85000080, n_gpu_layers: int = -1,
                 ubatch_size: int = 512, cpu_moe: bool = False,
                 n_cpu_moe: int = 0, cache_type_k: str = "f16",
                 cache_type_v: str = "f16", tensor_split: str = "",
-                override_tensor: str = ""):
+                override_tensor: str = "", extra_args: str = ""):
     """Start llama-server with the given model."""
     global _process, _monitor_task
 
@@ -108,6 +109,15 @@ async def start(model_path: str, port: int = 85000080, n_gpu_layers: int = -1,
     # Advanced tensor override (regex-based placement)
     if override_tensor.strip():
         cmd += ["-ot", override_tensor.strip()]
+
+    # Extra command-line arguments
+    if extra_args.strip():
+        try:
+            # Split respecting shell quoting
+            parts = shlex.split(extra_args.strip())
+            cmd.extend(parts)
+        except Exception as e:
+            raise ValueError(f"Invalid extra_args: {e}")
 
     try:
         _process = await asyncio.create_subprocess_exec(
