@@ -88,6 +88,7 @@ async def start(model_path: str, port: int = 85000080, n_gpu_layers: int = -1,
         "-ctv", cache_type_v,
         "--jinja",
         "--metrics",
+        "--fit-target", "300",
     ]
 
     # MoE offloading flags
