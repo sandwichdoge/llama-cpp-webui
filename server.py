@@ -9,7 +9,7 @@ from pathlib import Path
 
 import httpx
 
-from config import get_server_binary
+from config import get_server_binary, save_model_settings
 
 # Server process state
 _state = {
@@ -30,6 +30,14 @@ _monitor_task: asyncio.Task | None = None
 _log_task: asyncio.Task | None = None
 _log_lines: list[str] = []
 _LOG_MAX = 150
+
+
+def _persist_model_settings():
+    """Save per-model settings to disk after successful model load."""
+    filename = _state.get("model")
+    settings = _state.get("model_settings")
+    if filename and settings:
+        save_model_settings(filename, settings)
 
 
 def get_status() -> dict:
@@ -70,6 +78,23 @@ async def start(model_path: str, port: int = 85000080, n_gpu_layers: int = -1,
             "n_gpu_layers": n_gpu_layers,
             "ctx_size": ctx_size,
             "n_parallel": n_parallel,
+        },
+        model_settings={
+            "port": port,
+            "n_gpu_layers": n_gpu_layers,
+            "ctx_size": ctx_size,
+            "n_parallel": n_parallel,
+            "mmproj": mmproj,
+            "flash_attn": flash_attn,
+            "batch_size": batch_size,
+            "ubatch_size": ubatch_size,
+            "cpu_moe": cpu_moe,
+            "n_cpu_moe": n_cpu_moe,
+            "cache_type_k": cache_type_k,
+            "cache_type_v": cache_type_v,
+            "tensor_split": tensor_split,
+            "override_tensor": override_tensor,
+            "extra_args": extra_args,
         },
     )
 
@@ -162,7 +187,7 @@ async def stop():
 
     _process = None
     _state.update(status="stopped", model=None, model_path=None, pid=None,
-                  error=None, started_at=None, cmd="")
+                  error=None, started_at=None, cmd="", model_settings={})
 
 
 async def _log_reader():
@@ -201,6 +226,8 @@ async def _health_monitor(port: int):
                 if data.get("status") == "ok":
                     _state.update(status="running",
                                   started_at=__import__("datetime").datetime.now().isoformat())
+                    # Persist per-model settings now that the model has loaded successfully
+                    _persist_model_settings()
                     break
                 elif data.get("status") == "loading model":
                     _state["status"] = "starting"

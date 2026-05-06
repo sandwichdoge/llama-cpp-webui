@@ -1,5 +1,6 @@
 """Paths and configuration for llama-cpp-webui."""
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -42,3 +43,25 @@ def get_server_binary() -> Path:
 
 def get_settings_path() -> Path:
     return get_data_dir() / "model_settings.json"
+
+
+# ── Settings persistence ──────────────────────────────
+
+def load_all_settings() -> dict:
+    p = get_settings_path()
+    if p.exists():
+        try:
+            return json.loads(p.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {}
+
+
+def save_all_settings(data: dict):
+    get_settings_path().write_text(json.dumps(data, indent=2))
+
+
+def save_model_settings(filename: str, settings: dict):
+    all_s = load_all_settings()
+    all_s[filename] = settings
+    save_all_settings(all_s)
