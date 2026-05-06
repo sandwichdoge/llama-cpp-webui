@@ -617,6 +617,10 @@ function ModelSection({ modelsRef }) {
   const [overrideTensor, setOverrideTensor] = useState("");
   const [extraArgs, setExtraArgs] = useState("");
   const [mmproj, setMmproj] = useState("");
+  const [draftModel, setDraftModel] = useState("");
+  const [draftNgl, setDraftNgl] = useState(-1);
+  const [draftMax, setDraftMax] = useState(3);
+  const [draftPMin, setDraftPMin] = useState(0.0);
 
   const models = modelsData?.models || [];
   const mainModels = models.filter(m => !m.is_mmproj);
@@ -644,6 +648,10 @@ function ModelSection({ modelsRef }) {
     setOverrideTensor(d.override_tensor ?? "");
     setExtraArgs(d.extra_args ?? "");
     setMmproj(d.mmproj ?? "");
+    setDraftModel(d.draft_model_path ?? "");
+    setDraftNgl(d.draft_gpu_layers ?? -1);
+    setDraftMax(d.draft_max ?? 3);
+    setDraftPMin(d.draft_p_min ?? 0.0);
   };
 
   const initRef = useRef(false);
@@ -672,6 +680,10 @@ function ModelSection({ modelsRef }) {
       cache_type_k: cacheK, cache_type_v: cacheV,
       tensor_split: tensorSplit, override_tensor: overrideTensor,
       extra_args: extraArgs,
+      draft_model_path: draftModel,
+      draft_gpu_layers: draftNgl,
+      draft_max: draftMax,
+      draft_p_min: draftPMin,
     }).then(() => { setPolling(true); refreshServer(); })
       .catch(e => alert(e.message));
   };
@@ -745,6 +757,21 @@ function ModelSection({ modelsRef }) {
               </select>
             </div>
           )}
+
+          {/* Draft model selector for speculative decoding */}
+          <div style={{ marginBottom: "1rem" }}>
+            <label style={{ display: "block", fontSize: "0.68rem", fontFamily: "var(--font-mono)", color: "var(--text-2)", letterSpacing: "0.05em", textTransform: "uppercase", marginBottom: "0.25rem" }}>
+              Draft Model (MTP speculative decoding)
+            </label>
+            <select value={draftModel} onChange={e => setDraftModel(e.target.value)}>
+              <option value="">None (no speculative decoding)</option>
+              {models.filter(m => !m.is_mmproj && m.path !== selectedModel?.path).map(m => (
+                <option key={m.filename} value={m.path}>
+                  {m.filename}  ({m.size_human})
+                </option>
+              ))}
+            </select>
+          </div>
 
           <div className="params-grid">
             <div>
@@ -848,6 +875,35 @@ function ModelSection({ modelsRef }) {
                   Additional arguments passed directly to llama-server. Use shell‑quoting rules.
                 </div>
               </div>
+
+              {/* Speculative decoding draft model params */}
+              {draftModel && (
+                <>
+                  <div style={{ borderTop: "1px solid var(--border)", margin: "1rem 0 0.75rem", paddingTop: "0.75rem" }}>
+                    <label style={{ fontSize: "0.7rem", fontFamily: "var(--font-mono)", color: "var(--accent)", textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: "0.75rem" }}>
+                      Draft Model Settings
+                    </label>
+                    <div className="params-grid">
+                      <div>
+                        <label>Draft GPU Layers</label>
+                        <input type="number" value={draftNgl} onChange={e => setDraftNgl(+e.target.value)}
+                          title="GPU layers for draft model (-ngld). -1 = all layers." />
+                      </div>
+                      <div>
+                        <label>Draft Max Tokens</label>
+                        <input type="number" value={draftMax} onChange={e => setDraftMax(+e.target.value)} min={1} max={16}
+                          title="Maximum number of tokens the draft model predicts per step (--draft-max)." />
+                      </div>
+                      <div>
+                        <label>Draft P-Min</label>
+                        <input type="number" value={draftPMin} onChange={e => setDraftPMin(+e.target.value)}
+                          step="0.01" min={0} max={1}
+                          title="Minimum probability threshold for accepting draft tokens (--draft-p-min). 0.0 = greedy." />
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
             </>
           )}
 

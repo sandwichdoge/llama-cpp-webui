@@ -49,6 +49,11 @@ class LoadRequest(BaseModel):
     override_tensor: str = ""
     # Extra command line arguments
     extra_args: str = ""
+    # Speculative decoding draft model (MTP)
+    draft_model_path: str = ""
+    draft_gpu_layers: int = -1
+    draft_max: int = 3
+    draft_p_min: float = 0.0
 
 
 # ── UI ───────────────────────────────────────────────────
@@ -133,6 +138,10 @@ async def server_start(req: LoadRequest):
             tensor_split=req.tensor_split,
             override_tensor=req.override_tensor,
             extra_args=req.extra_args,
+            draft_model_path=req.draft_model_path,
+            draft_gpu_layers=req.draft_gpu_layers,
+            draft_max=req.draft_max,
+            draft_p_min=req.draft_p_min,
         )
     except (RuntimeError, FileNotFoundError) as e:
         raise HTTPException(400, str(e))

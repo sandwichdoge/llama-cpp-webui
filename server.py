@@ -53,7 +53,9 @@ async def start(model_path: str, port: int = 85000080, n_gpu_layers: int = -1,
                 ubatch_size: int = 512, cpu_moe: bool = False,
                 n_cpu_moe: int = 0, cache_type_k: str = "f16",
                 cache_type_v: str = "f16", tensor_split: str = "",
-                override_tensor: str = "", extra_args: str = ""):
+                override_tensor: str = "", extra_args: str = "",
+                draft_model_path: str = "", draft_gpu_layers: int = -1,
+                draft_max: int = 3, draft_p_min: float = 0.0):
     """Start llama-server with the given model."""
     global _process, _monitor_task
 
@@ -95,6 +97,10 @@ async def start(model_path: str, port: int = 85000080, n_gpu_layers: int = -1,
             "tensor_split": tensor_split,
             "override_tensor": override_tensor,
             "extra_args": extra_args,
+            "draft_model_path": draft_model_path,
+            "draft_gpu_layers": draft_gpu_layers,
+            "draft_max": draft_max,
+            "draft_p_min": draft_p_min,
         },
     )
 
@@ -127,6 +133,16 @@ async def start(model_path: str, port: int = 85000080, n_gpu_layers: int = -1,
         mmproj_path = Path(mmproj.strip())
         if mmproj_path.is_file():
             cmd += ["--mmproj", str(mmproj_path)]
+
+    # Speculative decoding draft model (MTP)
+    if draft_model_path.strip():
+        draft_path = Path(draft_model_path.strip())
+        if draft_path.is_file():
+            cmd += ["--spec-type", "mtp",
+                    "-md", str(draft_path),
+                    "-ngld", str(draft_gpu_layers),
+                    "--draft-max", str(draft_max),
+                    "--draft-p-min", str(draft_p_min)]
 
     # Multi-GPU tensor split
     if tensor_split.strip():
