@@ -6,6 +6,10 @@ from pathlib import Path
 
 GGUF_MAGIC = b"GGUF"
 
+# Cache: path -> (mtime_ns, size, result). GGUF headers are immutable
+# once written, so (mtime, size) is a sufficient cache key.
+_meta_cache: dict[str, tuple[int, int, dict | None]] = {}
+
 # Value types
 _UINT8, _INT8, _UINT16, _INT16, _UINT32, _INT32 = 0, 1, 2, 3, 4, 5
 _FLOAT32, _BOOL, _STRING, _ARRAY, _UINT64, _INT64, _FLOAT64 = 6, 7, 8, 9, 10, 11, 12
@@ -25,6 +29,29 @@ def _read_str(f) -> str:
     return f.read(n).decode("utf-8", errors="replace")
 
 
+def _skip_val(f, vtype: int) -> None:
+    """Advance past a value without materializing it. Used for arrays we don't read."""
+    if vtype in _SCALAR_FMT:
+        f.seek(_SCALAR_FMT[vtype][1], 1)
+    elif vtype == _BOOL:
+        f.seek(1, 1)
+    elif vtype == _STRING:
+        n = struct.unpack("<Q", f.read(8))[0]
+        f.seek(n, 1)
+    elif vtype == _ARRAY:
+        arr_type = struct.unpack("<I", f.read(4))[0]
+        arr_len = struct.unpack("<Q", f.read(8))[0]
+        if arr_type in _SCALAR_FMT:
+            f.seek(_SCALAR_FMT[arr_type][1] * arr_len, 1)
+        elif arr_type == _BOOL:
+            f.seek(arr_len, 1)
+        else:
+            for _ in range(arr_len):
+                _skip_val(f, arr_type)
+    else:
+        raise ValueError(f"Unknown GGUF value type: {vtype}")
+
+
 def _read_val(f, vtype: int):
     if vtype in _SCALAR_FMT:
         fmt, size = _SCALAR_FMT[vtype]
@@ -34,9 +61,10 @@ def _read_val(f, vtype: int):
     if vtype == _STRING:
         return _read_str(f)
     if vtype == _ARRAY:
-        arr_type = struct.unpack("<I", f.read(4))[0]
-        arr_len = struct.unpack("<Q", f.read(8))[0]
-        return [_read_val(f, arr_type) for _ in range(arr_len)]
+        # We never consume array values, so skip rather than materialize
+        # (tokenizer vocab/merges can be hundreds of thousands of entries).
+        _skip_val(f, _ARRAY)
+        return None
     raise ValueError(f"Unknown GGUF value type: {vtype}")
 
 
@@ -66,24 +94,33 @@ def read_metadata(path: str | Path) -> dict | None:
     fields cannot be found.
     """
     path = Path(path)
-    size_mb = path.stat().st_size / (1024 * 1024)
+    key = str(path)
+    st = path.stat()
+    cached = _meta_cache.get(key)
+    if cached is not None and cached[0] == st.st_mtime_ns and cached[1] == st.st_size:
+        return cached[2]
+
+    size_mb = st.st_size / (1024 * 1024)
 
     try:
         with open(path, "rb") as f:
             if f.read(4) != GGUF_MAGIC:
+                _meta_cache[key] = (st.st_mtime_ns, st.st_size, None)
                 return None
             version = struct.unpack("<I", f.read(4))[0]
             if version not in (2, 3):
+                _meta_cache[key] = (st.st_mtime_ns, st.st_size, None)
                 return None
             _tensor_count = struct.unpack("<Q", f.read(8))[0]
             kv_count = struct.unpack("<Q", f.read(8))[0]
 
             meta: dict = {}
             for _ in range(kv_count):
-                key = _read_str(f)
+                k = _read_str(f)
                 vtype = struct.unpack("<I", f.read(4))[0]
-                meta[key] = _read_val(f, vtype)
+                meta[k] = _read_val(f, vtype)
     except Exception:
+        _meta_cache[key] = (st.st_mtime_ns, st.st_size, None)
         return None
 
     n_layers = _find(meta, "block_count")
@@ -92,16 +129,20 @@ def read_metadata(path: str | Path) -> dict | None:
     embedding_dim = _find(meta, "embedding_length")
 
     if not all(v is not None for v in (n_layers, n_kv_heads, embedding_dim)):
+        _meta_cache[key] = (st.st_mtime_ns, st.st_size, None)
         return None
     # Some models store n_kv_heads = 0 meaning "same as n_heads"
     if n_kv_heads == 0:
         n_kv_heads = _find(meta, "attention.head_count")
     if not n_kv_heads:
+        _meta_cache[key] = (st.st_mtime_ns, st.st_size, None)
         return None
 
-    return {
+    result = {
         "n_layers": int(n_layers),
         "n_kv_heads": int(n_kv_heads),
         "embedding_dim": int(embedding_dim),
         "size_mb": size_mb,
     }
+    _meta_cache[key] = (st.st_mtime_ns, st.st_size, result)
+    return result
