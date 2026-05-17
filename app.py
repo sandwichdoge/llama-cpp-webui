@@ -9,10 +9,18 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-import builder, downloader, gguf_reader, server
+import builder, downloader, gguf_reader, presets, server
 from config import load_all_settings
 
+presets.seed_if_empty()
+
 app = FastAPI(title="llama-cpp-webui", version="1.0.0")
+
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    """Gracefully shut down all background resources."""
+    await server.shutdown()
 
 
 @app.exception_handler(Exception)
@@ -28,6 +36,12 @@ class BuildRequest(BaseModel):
 
 class DownloadRequest(BaseModel):
     url: str
+
+class PresetRequest(BaseModel):
+    id: str = ""
+    name: str
+    args: str = ""
+    description: str = ""
 
 class LoadRequest(BaseModel):
     model_path: str
@@ -49,6 +63,10 @@ class LoadRequest(BaseModel):
     override_tensor: str = ""
     # Extra command line arguments
     extra_args: str = ""
+    # IDs of presets currently toggled active in the UI. Persisted with model
+    # settings so reloads restore the highlighted state. The preset args
+    # themselves are already folded into `extra_args` by the frontend.
+    active_preset_ids: list[str] = []
     # Speculative decoding draft model (MTP)
     draft_model_path: str = ""
     draft_gpu_layers: int = -1
@@ -138,6 +156,7 @@ async def server_start(req: LoadRequest):
             tensor_split=req.tensor_split,
             override_tensor=req.override_tensor,
             extra_args=req.extra_args,
+            active_preset_ids=req.active_preset_ids,
             draft_model_path=req.draft_model_path,
             draft_gpu_layers=req.draft_gpu_layers,
             draft_max=req.draft_max,
@@ -154,3 +173,24 @@ async def server_start(req: LoadRequest):
 async def server_stop():
     await server.stop()
     return {"message": "Server stopped"}
+
+
+# ── Preset endpoints ─────────────────────────────────────
+
+@app.get("/api/presets")
+async def get_presets():
+    return {"presets": presets.list_presets()}
+
+@app.post("/api/presets")
+async def upsert_preset(req: PresetRequest):
+    try:
+        record = presets.upsert_preset(req.model_dump())
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return record
+
+@app.delete("/api/presets/{preset_id}")
+async def delete_preset(preset_id: str):
+    if not presets.delete_preset(preset_id):
+        raise HTTPException(404, "Preset not found")
+    return {"message": f"Deleted {preset_id}"}

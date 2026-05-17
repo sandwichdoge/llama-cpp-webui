@@ -45,6 +45,10 @@ def get_settings_path() -> Path:
     return get_data_dir() / "model_settings.json"
 
 
+def get_presets_path() -> Path:
+    return get_data_dir() / "presets.json"
+
+
 # ── Settings persistence ──────────────────────────────
 
 def load_all_settings() -> dict:

@@ -587,6 +587,85 @@ function DownloadSection({ refreshModels }) {
   );
 }
 
+// ── Preset Editor ────────────────────────────────────────
+function PresetEditor({ presets, refresh }) {
+  const [draft, setDraft] = useState({ name: "", args: "", description: "" });
+  const [err, setErr] = useState("");
+
+  const save = (record) => {
+    setErr("");
+    api.post("/api/presets", record)
+      .then(() => refresh())
+      .catch(e => setErr(e.message));
+  };
+
+  const handleAdd = () => {
+    if (!draft.name.trim()) { setErr("Name is required"); return; }
+    api.post("/api/presets", draft)
+      .then(() => { setDraft({ name: "", args: "", description: "" }); refresh(); })
+      .catch(e => setErr(e.message));
+  };
+
+  const handleDelete = (id) => {
+    api.del(`/api/presets/${encodeURIComponent(id)}`).then(refresh);
+  };
+
+  const inputStyle = { fontFamily: "var(--font-mono)", fontSize: "0.72rem", padding: "0.35rem 0.5rem" };
+
+  return (
+    <div style={{ marginTop: "0.75rem", padding: "0.75rem", background: "var(--bg-2)", border: "1px solid var(--border)", borderRadius: "6px" }}>
+      {presets.length > 0 && (
+        <div style={{ display: "grid", gridTemplateColumns: "1.2fr 2fr 1.5fr auto", gap: "0.4rem 0.5rem", marginBottom: "0.6rem", alignItems: "center" }}>
+          <div style={{ fontSize: "0.62rem", fontFamily: "var(--font-mono)", color: "var(--text-2)", letterSpacing: "0.05em", textTransform: "uppercase" }}>Name</div>
+          <div style={{ fontSize: "0.62rem", fontFamily: "var(--font-mono)", color: "var(--text-2)", letterSpacing: "0.05em", textTransform: "uppercase" }}>Args</div>
+          <div style={{ fontSize: "0.62rem", fontFamily: "var(--font-mono)", color: "var(--text-2)", letterSpacing: "0.05em", textTransform: "uppercase" }}>Description</div>
+          <div />
+          {presets.map(p => (
+            <PresetRow key={p.id} preset={p} onSave={save} onDelete={() => handleDelete(p.id)} inputStyle={inputStyle} />
+          ))}
+        </div>
+      )}
+      <div style={{ display: "grid", gridTemplateColumns: "1.2fr 2fr 1.5fr auto", gap: "0.4rem 0.5rem", alignItems: "center" }}>
+        <input style={inputStyle} placeholder="My preset"
+          value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })} />
+        <input style={inputStyle} placeholder="--flag value --other-flag"
+          value={draft.args} onChange={e => setDraft({ ...draft, args: e.target.value })} />
+        <input style={inputStyle} placeholder="optional notes"
+          value={draft.description} onChange={e => setDraft({ ...draft, description: e.target.value })} />
+        <button className="btn-primary btn-sm" onClick={handleAdd}>Add</button>
+      </div>
+      {err && (
+        <div style={{ marginTop: "0.5rem", fontFamily: "var(--font-mono)", fontSize: "0.7rem", color: "var(--red)" }}>{err}</div>
+      )}
+    </div>
+  );
+}
+
+function PresetRow({ preset, onSave, onDelete, inputStyle }) {
+  const [name, setName] = useState(preset.name);
+  const [args, setArgs] = useState(preset.args);
+  const [description, setDescription] = useState(preset.description || "");
+  const dirty = name !== preset.name || args !== preset.args || description !== (preset.description || "");
+
+  useEffect(() => {
+    setName(preset.name); setArgs(preset.args); setDescription(preset.description || "");
+  }, [preset.id, preset.name, preset.args, preset.description]);
+
+  return (
+    <>
+      <input style={inputStyle} value={name} onChange={e => setName(e.target.value)} />
+      <input style={inputStyle} value={args} onChange={e => setArgs(e.target.value)} />
+      <input style={inputStyle} value={description} onChange={e => setDescription(e.target.value)} />
+      <div style={{ display: "flex", gap: "0.25rem" }}>
+        <button className="btn-secondary btn-sm" disabled={!dirty}
+          style={!dirty ? { opacity: 0.4, cursor: "not-allowed" } : {}}
+          onClick={() => onSave({ id: preset.id, name, args, description })}>Save</button>
+        <button className="btn-danger btn-sm" onClick={onDelete}>×</button>
+      </div>
+    </>
+  );
+}
+
 // ── Model List / Load Section ────────────────────────────
 function ModelSection({ modelsRef }) {
   const { data: modelsData, refresh: refreshModels } = useFetch("/api/models");
@@ -621,6 +700,12 @@ function ModelSection({ modelsRef }) {
   const [draftNgl, setDraftNgl] = useState(-1);
   const [draftMax, setDraftMax] = useState(3);
   const [draftPMin, setDraftPMin] = useState(0.0);
+  const [showPresetMgr, setShowPresetMgr] = useState(false);
+  // IDs of presets the user has toggled "on". Their args are resolved by the
+  // backend at launch time, so we only need to track the IDs in the UI.
+  const [activePresetIds, setActivePresetIds] = useState([]);
+  const { data: presetsData, refresh: refreshPresets } = useFetch("/api/presets");
+  const allPresets = presetsData?.presets || [];
 
   const models = modelsData?.models || [];
   const mainModels = models.filter(m => !m.is_mmproj);
@@ -652,6 +737,33 @@ function ModelSection({ modelsRef }) {
     setDraftNgl(d.draft_gpu_layers ?? -1);
     setDraftMax(d.draft_max ?? 3);
     setDraftPMin(d.draft_p_min ?? 0.0);
+    setActivePresetIds(Array.isArray(d.active_preset_ids) ? d.active_preset_ids : []);
+  };
+
+  const togglePreset = (preset) => {
+    const fragment = (preset.args || "").trim();
+    const isActive = activePresetIds.includes(preset.id);
+    if (isActive) {
+      setActivePresetIds(prev => prev.filter(id => id !== preset.id));
+      if (fragment) {
+        // Strip the first exact occurrence along with any surrounding spaces,
+        // then collapse the result. If the user has edited the text such that
+        // the fragment is no longer present, leave the text alone — flipping
+        // the highlight off is enough.
+        setExtraArgs(prev => {
+          const idx = prev.indexOf(fragment);
+          if (idx < 0) return prev;
+          const before = prev.slice(0, idx).replace(/\s+$/, "");
+          const after = prev.slice(idx + fragment.length).replace(/^\s+/, "");
+          return before && after ? `${before} ${after}` : before + after;
+        });
+      }
+    } else {
+      setActivePresetIds(prev => [...prev, preset.id]);
+      if (fragment) {
+        setExtraArgs(prev => prev.trim() ? `${prev.trim()} ${fragment}` : fragment);
+      }
+    }
   };
 
   const initRef = useRef(false);
@@ -680,6 +792,7 @@ function ModelSection({ modelsRef }) {
       cache_type_k: cacheK, cache_type_v: cacheV,
       tensor_split: tensorSplit, override_tensor: overrideTensor,
       extra_args: extraArgs,
+      active_preset_ids: activePresetIds,
       draft_model_path: draftModel,
       draft_gpu_layers: draftNgl,
       draft_max: draftMax,
@@ -863,6 +976,55 @@ function ModelSection({ modelsRef }) {
                 </label>
                 <input type="text" value={overrideTensor} onChange={e => setOverrideTensor(e.target.value)}
                   placeholder='e.g. blk\.([0-9])\.=CUDA0,exps=CPU' />
+              </div>
+
+              <div style={{ marginBottom: "1rem" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.35rem" }}>
+                  <label style={{ fontSize: "0.68rem", fontFamily: "var(--font-mono)", color: "var(--text-2)", letterSpacing: "0.05em", textTransform: "uppercase" }}>
+                    Presets (global, appended to extra args)
+                  </label>
+                  <span onClick={() => setShowPresetMgr(v => !v)}
+                    style={{ cursor: "pointer", fontSize: "0.68rem", fontFamily: "var(--font-mono)", color: "var(--text-2)", letterSpacing: "0.05em", textTransform: "uppercase", userSelect: "none" }}>
+                    {showPresetMgr ? "▾ Done" : "▸ Manage"}
+                  </span>
+                </div>
+                {allPresets.length === 0 ? (
+                  <div style={{ fontSize: "0.72rem", color: "var(--text-2)" }}>
+                    No presets yet. Click <b>Manage</b> to add one.
+                  </div>
+                ) : (
+                  <>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
+                      {allPresets.map(p => {
+                        const active = activePresetIds.includes(p.id);
+                        return (
+                          <button key={p.id} type="button" onClick={() => togglePreset(p)}
+                            title={p.description ? `${p.description}\n\n${p.args}` : p.args}
+                            aria-pressed={active}
+                            style={{
+                              fontFamily: "var(--font-mono)", fontSize: "0.72rem",
+                              padding: "0.25rem 0.6rem",
+                              border: `1px solid ${active ? "var(--accent)" : "var(--border)"}`,
+                              borderRadius: "4px",
+                              background: active ? "var(--accent-glow)" : "var(--bg-2)",
+                              color: active ? "var(--accent)" : "var(--text-1)",
+                              cursor: "pointer",
+                              userSelect: "none",
+                              transition: "all 0.15s ease",
+                            }}>
+                            {p.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div style={{ fontSize: "0.65rem", color: "var(--text-2)", marginTop: "0.4rem" }}>
+                      Click to toggle. Active presets stay highlighted and their args are merged into Extra Args.
+                    </div>
+                  </>
+                )}
+                {showPresetMgr && (
+                  <PresetEditor presets={allPresets} refresh={refreshPresets} />
+                )}
               </div>
 
               <div style={{ marginBottom: "1rem" }}>

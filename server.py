@@ -3,8 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import shlex
-import signal
-import time
 from pathlib import Path
 
 import httpx
@@ -30,6 +28,7 @@ _monitor_task: asyncio.Task | None = None
 _log_task: asyncio.Task | None = None
 _log_lines: list[str] = []
 _LOG_MAX = 150
+_health_client: httpx.AsyncClient | None = None
 
 
 def _persist_model_settings():
@@ -54,6 +53,7 @@ async def start(model_path: str, port: int = 85000080, n_gpu_layers: int = -1,
                 n_cpu_moe: int = 0, cache_type_k: str = "f16",
                 cache_type_v: str = "f16", tensor_split: str = "",
                 override_tensor: str = "", extra_args: str = "",
+                active_preset_ids: list[str] | None = None,
                 draft_model_path: str = "", draft_gpu_layers: int = -1,
                 draft_max: int = 3, draft_p_min: float = 0.0):
     """Start llama-server with the given model."""
@@ -97,6 +97,7 @@ async def start(model_path: str, port: int = 85000080, n_gpu_layers: int = -1,
             "tensor_split": tensor_split,
             "override_tensor": override_tensor,
             "extra_args": extra_args,
+            "active_preset_ids": list(active_preset_ids or []),
             "draft_model_path": draft_model_path,
             "draft_gpu_layers": draft_gpu_layers,
             "draft_max": draft_max,
@@ -152,10 +153,11 @@ async def start(model_path: str, port: int = 85000080, n_gpu_layers: int = -1,
     if override_tensor.strip():
         cmd += ["-ot", override_tensor.strip()]
 
-    # Extra command-line arguments
+    # Extra command-line arguments. The frontend already folds any active
+    # preset args into this string when the user toggles a preset on; we only
+    # persist `active_preset_ids` for highlight restore, not for re-expansion.
     if extra_args.strip():
         try:
-            # Split respecting shell quoting
             parts = shlex.split(extra_args.strip())
             cmd.extend(parts)
         except Exception as e:
@@ -183,7 +185,7 @@ async def start(model_path: str, port: int = 85000080, n_gpu_layers: int = -1,
 
 async def stop():
     """Stop the running llama-server process."""
-    global _process, _monitor_task, _log_task
+    global _process, _monitor_task, _log_task, _health_client
 
     if _monitor_task:
         _monitor_task.cancel()
@@ -201,9 +203,22 @@ async def stop():
             _process.kill()
             await _process.wait()
 
+    if _health_client:
+        await _health_client.aclose()
+        _health_client = None
+
     _process = None
     _state.update(status="stopped", model=None, model_path=None, pid=None,
                   error=None, started_at=None, cmd="", model_settings={})
+
+
+async def shutdown():
+    """Gracefully shut down server resources on app exit."""
+    global _health_client
+    await stop()
+    if _health_client:
+        await _health_client.aclose()
+        _health_client = None
 
 
 async def _log_reader():
@@ -226,7 +241,10 @@ async def _log_reader():
 
 async def _health_monitor(port: int):
     """Poll the llama-server /health endpoint until it's ready, then watch it."""
+    global _health_client
     url = f"http://127.0.0.1:{port}/health"
+
+    _health_client = httpx.AsyncClient()
 
     # Wait for server to become healthy (model loading can take a while)
     for attempt in range(600):  # up to 5 minutes
@@ -236,17 +254,15 @@ async def _health_monitor(port: int):
             return
 
         try:
-            async with httpx.AsyncClient() as client:
-                r = await client.get(url, timeout=2)
-                data = r.json()
-                if data.get("status") == "ok":
-                    _state.update(status="running",
-                                  started_at=__import__("datetime").datetime.now().isoformat())
-                    # Persist per-model settings now that the model has loaded successfully
-                    _persist_model_settings()
-                    break
-                elif data.get("status") == "loading model":
-                    _state["status"] = "starting"
+            r = await _health_client.get(url, timeout=2)
+            data = r.json()
+            if data.get("status") == "ok":
+                _state.update(status="running",
+                              started_at=__import__("datetime").datetime.now().isoformat())
+                _persist_model_settings()
+                break
+            elif data.get("status") == "loading model":
+                _state["status"] = "starting"
         except Exception:
             pass
 
@@ -263,9 +279,8 @@ async def _health_monitor(port: int):
             return
 
         try:
-            async with httpx.AsyncClient() as client:
-                r = await client.get(url, timeout=5)
-                if r.status_code != 200:
-                    _state.update(status="error", error=f"Health check returned {r.status_code}")
+            r = await _health_client.get(url, timeout=5)
+            if r.status_code != 200:
+                _state.update(status="error", error=f"Health check returned {r.status_code}")
         except Exception as e:
             _state.update(status="error", error=f"Health check failed: {e}")
