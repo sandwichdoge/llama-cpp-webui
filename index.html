@@ -779,6 +779,17 @@ function ModelSection({ modelsRef }) {
     initRef.current = true;
   }, [mainModels.length]);
 
+  // Drop a draft selection that has become unresolvable — file deleted, or
+  // the same model was just picked as main. Without this, the UI dropdown
+  // visually shows "None" but the stale path stays in React state and gets
+  // POSTed at load time.
+  useEffect(() => {
+    if (!modelsData || !draftModel) return;
+    const valid = models.some(m =>
+      !m.is_mmproj && m.path === draftModel && m.path !== selectedModel?.path);
+    if (!valid) setDraftModel("");
+  }, [draftModel, modelsData, selectedModel?.path]);
+
   const handleSelect = (filename) => {
     setSelected(filename);
     const model = mainModels.find(m => m.filename === filename);
@@ -1074,12 +1085,16 @@ function ModelSection({ modelsRef }) {
           )}
 
           {(() => {
-            const vram = estimateVram(selectedModel?.meta, ngl, ctx, cacheK, cacheV);
-            return vram != null ? (
+            const vramMain = estimateVram(selectedModel?.meta, ngl, ctx, cacheK, cacheV);
+            if (vramMain == null) return null;
+            const draftMeta = draftModel ? models.find(m => m.path === draftModel)?.meta : null;
+            const vramDraft = estimateVram(draftMeta, draftNgl, ctx, cacheK, cacheV) || 0;
+            const vram = vramMain + vramDraft;
+            return (
               <div style={{ fontFamily: "var(--font-mono)", fontSize: "0.72rem", color: "var(--text-2)", marginBottom: "0.75rem" }}>
                 Estimated Memory Usage: <span style={{ color: "var(--accent)" }}>{(vram / 1024).toFixed(1)} GB</span>
               </div>
-            ) : null;
+            );
           })()}
 
           <div style={{ display: "flex", gap: "0.5rem" }}>

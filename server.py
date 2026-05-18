@@ -43,8 +43,8 @@ class LoadRequest(BaseModel):
     # Speculative decoding draft model (MTP)
     draft_model_path: str = ""
     draft_gpu_layers: int = -1
-    draft_max: int = 3
-    draft_p_min: float = 0.0
+    draft_max: int = Field(default=3, ge=1, le=16)
+    draft_p_min: float = Field(default=0.0, ge=0.0, le=1.0)
     # Inference bind host. Defaults to loopback for safety — set to "0.0.0.0"
     # explicitly if you want the inference port reachable from the LAN.
     bind_host: str = "127.0.0.1"
@@ -119,12 +119,11 @@ def _build_command(req: LoadRequest, binary: Path, model: Path) -> list[str]:
 
     if req.draft_model_path.strip():
         draft_path = Path(req.draft_model_path.strip())
-        if draft_path.is_file():
-            cmd += ["--spec-type", "mtp",
-                    "-md", str(draft_path),
-                    "-ngld", str(req.draft_gpu_layers),
-                    "--draft-max", str(req.draft_max),
-                    "--draft-p-min", str(req.draft_p_min)]
+        cmd += ["--spec-type", "mtp",
+                "-md", str(draft_path),
+                "-ngld", str(req.draft_gpu_layers),
+                "--draft-max", str(req.draft_max),
+                "--draft-p-min", str(req.draft_p_min)]
 
     if req.tensor_split.strip():
         cmd += ["-ts", req.tensor_split.strip()]
@@ -158,6 +157,13 @@ async def start(req: LoadRequest) -> None:
     model = Path(req.model_path)
     if not model.is_file():
         raise FileNotFoundError(f"Model file not found: {req.model_path}")
+
+    if req.draft_model_path.strip():
+        draft = Path(req.draft_model_path.strip())
+        if not draft.is_file():
+            raise FileNotFoundError(f"Draft model file not found: {req.draft_model_path}")
+        if draft.resolve() == model.resolve():
+            raise ValueError("Draft model must differ from the main model")
 
     cmd = _build_command(req, binary, model)
 
