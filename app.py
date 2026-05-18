@@ -2,37 +2,45 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel, Field
 
 import builder, downloader, gguf_reader, presets, server
 from config import load_all_settings
+from server import LoadRequest
+
+log = logging.getLogger("llama_cpp_webui")
 
 presets.seed_if_empty()
 
-app = FastAPI(title="llama-cpp-webui", version="1.0.0")
+_INDEX_HTML = Path(__file__).parent / "index.html"
 
 
-@app.on_event("shutdown")
-async def on_shutdown():
-    """Gracefully shut down all background resources."""
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
     await server.shutdown()
+
+
+app = FastAPI(title="llama-cpp-webui", version="1.0.0", lifespan=lifespan)
 
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    """Ensure all errors return JSON, never HTML tracebacks."""
-    return JSONResponse(status_code=500, content={"detail": str(exc)})
+    """Log unhandled errors and return a generic JSON 500 — never leak internals."""
+    log.exception("Unhandled error in %s %s", request.method, request.url.path)
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
 # ── Request schemas ──────────────────────────────────────
 
 class BuildRequest(BaseModel):
-    gcc_flags: list[str] = []
+    gcc_flags: list[str] = Field(default_factory=list)
 
 class DownloadRequest(BaseModel):
     url: str
@@ -43,43 +51,12 @@ class PresetRequest(BaseModel):
     args: str = ""
     description: str = ""
 
-class LoadRequest(BaseModel):
-    model_path: str
-    port: int = 5000
-    n_gpu_layers: int = -1
-    ctx_size: int = 32768
-    n_parallel: int = 1
-    # Multimodal
-    mmproj: str = ""
-    # Advanced / MoE
-    flash_attn: str = "auto"
-    batch_size: int = 2048
-    ubatch_size: int = 512
-    cpu_moe: bool = False
-    n_cpu_moe: int = 0
-    cache_type_k: str = "f16"
-    cache_type_v: str = "f16"
-    tensor_split: str = ""
-    override_tensor: str = ""
-    # Extra command line arguments
-    extra_args: str = ""
-    # IDs of presets currently toggled active in the UI. Persisted with model
-    # settings so reloads restore the highlighted state. The preset args
-    # themselves are already folded into `extra_args` by the frontend.
-    active_preset_ids: list[str] = []
-    # Speculative decoding draft model (MTP)
-    draft_model_path: str = ""
-    draft_gpu_layers: int = -1
-    draft_max: int = 3
-    draft_p_min: float = 0.0
-
 
 # ── UI ───────────────────────────────────────────────────
 
-@app.get("/", response_class=HTMLResponse)
+@app.get("/")
 async def serve_ui():
-    html_path = Path(__file__).parent / "index.html"
-    return HTMLResponse(html_path.read_text(encoding="utf-8"))
+    return FileResponse(_INDEX_HTML, media_type="text/html; charset=utf-8")
 
 
 # ── Build endpoints ──────────────────────────────────────
@@ -90,8 +67,7 @@ async def build_status():
 
 @app.post("/api/build/start")
 async def build_start(req: BuildRequest = BuildRequest()):
-    status = builder.get_status()
-    if status["status"] == "building":
+    if builder.is_building():
         raise HTTPException(409, "Build already in progress")
     asyncio.create_task(builder.build(gcc_flags=req.gcc_flags))
     return {"message": "Build started"}
@@ -139,34 +115,9 @@ async def server_status():
 @app.post("/api/server/start")
 async def server_start(req: LoadRequest):
     try:
-        await server.start(
-            model_path=req.model_path,
-            port=req.port,
-            n_gpu_layers=req.n_gpu_layers,
-            ctx_size=req.ctx_size,
-            n_parallel=req.n_parallel,
-            mmproj=req.mmproj,
-            flash_attn=req.flash_attn,
-            batch_size=req.batch_size,
-            ubatch_size=req.ubatch_size,
-            cpu_moe=req.cpu_moe,
-            n_cpu_moe=req.n_cpu_moe,
-            cache_type_k=req.cache_type_k,
-            cache_type_v=req.cache_type_v,
-            tensor_split=req.tensor_split,
-            override_tensor=req.override_tensor,
-            extra_args=req.extra_args,
-            active_preset_ids=req.active_preset_ids,
-            draft_model_path=req.draft_model_path,
-            draft_gpu_layers=req.draft_gpu_layers,
-            draft_max=req.draft_max,
-            draft_p_min=req.draft_p_min,
-        )
-    except (RuntimeError, FileNotFoundError) as e:
+        await server.start(req)
+    except (RuntimeError, FileNotFoundError, ValueError) as e:
         raise HTTPException(400, str(e))
-    except Exception as e:
-        raise HTTPException(500, f"Unexpected error: {e}")
-
     return {"message": "Server starting…"}
 
 @app.post("/api/server/stop")

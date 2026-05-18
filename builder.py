@@ -3,13 +3,15 @@ from __future__ import annotations
 
 import asyncio
 import datetime
-import json
+import logging
+import multiprocessing
 import subprocess
 import sys
-import time
 from pathlib import Path
 
-from config import get_llama_cpp_dir, get_build_log_path, get_server_binary, get_data_dir
+from config import get_llama_cpp_dir, get_build_log_path, get_server_binary
+
+log = logging.getLogger(__name__)
 
 REPO_URL = "https://github.com/ggerganov/llama.cpp.git"
 
@@ -44,12 +46,6 @@ def _get_git_info(repo_dir: Path) -> dict:
 def _get_driver_cuda_version() -> tuple[int, int] | None:
     """Return the max CUDA version the installed NVIDIA driver supports."""
     try:
-        out = subprocess.check_output(
-            ["nvidia-smi", "--query-gpu=driver_version",
-             "--format=csv,noheader"],
-            stderr=subprocess.STDOUT, text=True,
-        ).strip()
-        # Parse the CUDA version from the nvidia-smi table header instead
         table = subprocess.check_output(
             ["nvidia-smi"], stderr=subprocess.STDOUT, text=True,
         )
@@ -95,7 +91,6 @@ def _detect_cmake_flags() -> list[str]:
             flags += ["-G", "NMake Makefiles"]
 
     # Check for CUDA
-     # Check for CUDA
     try:
         subprocess.check_output(["nvcc", "--version"], stderr=subprocess.STDOUT)
 
@@ -162,10 +157,19 @@ def get_status() -> dict:
     return result
 
 
-async def build(pull_only: bool = False, gcc_flags: list[str] | None = None):
-    """Clone/pull and build llama.cpp. Runs in background."""
+def is_building() -> bool:
+    return _build_lock.locked()
+
+
+async def build(gcc_flags: list[str] | None = None):
+    """Clone/pull and build llama.cpp. Runs in background.
+
+    Safe under concurrent invocation: the lock is checked atomically inside
+    the critical section, so a second caller silently returns without
+    clobbering the in-flight build's state.
+    """
     if _build_lock.locked():
-        return  # already building
+        return
 
     async with _build_lock:
         _build_state.update(status="building", progress="Starting…", log="",
@@ -178,6 +182,7 @@ async def build(pull_only: bool = False, gcc_flags: list[str] | None = None):
             _build_state.update(status="success", progress="Build complete ✓",
                                 finished_at=datetime.datetime.now().isoformat(), **info)
         except Exception as e:
+            log.exception("Build failed")
             _build_state.update(status="failed", error=str(e),
                                 finished_at=datetime.datetime.now().isoformat())
 
@@ -236,7 +241,6 @@ async def _run_build(gcc_flags: list[str] | None = None):
     await _exec(cmake_cmd)
 
     # ── Build ────────────────────────────────────────────
-    import multiprocessing
     jobs = str(multiprocessing.cpu_count())
     _build_state["progress"] = f"Compiling with {jobs} jobs…"
     await _exec(["cmake", "--build", str(build_dir), "--config", "Release",
@@ -255,7 +259,8 @@ async def _exec(cmd: list[str]):
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
     )
-    lines = []
+    assert proc.stdout is not None  # PIPE was requested above
+    lines: list[str] = []
     while True:
         line = await proc.stdout.readline()
         if not line:
@@ -278,5 +283,5 @@ async def _exec(cmd: list[str]):
         with open(get_build_log_path(), "a") as f:
             f.write(f"\n{'='*60}\n$ {' '.join(cmd)}\n{'='*60}\n")
             f.write("\n".join(lines) + "\n")
-    except Exception:
-        pass
+    except OSError:
+        log.warning("Could not append to build log at %s", get_build_log_path())

@@ -7,7 +7,7 @@ import shlex
 import uuid
 from typing import Any
 
-from config import get_presets_path
+from config import atomic_write_json, get_presets_path, presets_lock
 
 _BUILTIN_SEEDS: list[dict[str, str]] = [
     {
@@ -38,18 +38,20 @@ def _load_raw() -> dict[str, Any]:
 
 
 def _save_raw(data: dict[str, Any]) -> None:
-    get_presets_path().write_text(json.dumps(data, indent=2))
+    atomic_write_json(get_presets_path(), data)
 
 
 def seed_if_empty() -> None:
     """Populate the presets file with built-in examples if it doesn't exist."""
-    if get_presets_path().exists():
-        return
-    _save_raw({"presets": list(_BUILTIN_SEEDS)})
+    with presets_lock:
+        if get_presets_path().exists():
+            return
+        _save_raw({"presets": list(_BUILTIN_SEEDS)})
 
 
 def list_presets() -> list[dict[str, Any]]:
-    return _load_raw()["presets"]
+    with presets_lock:
+        return _load_raw()["presets"]
 
 
 def get_preset(preset_id: str) -> dict[str, Any] | None:
@@ -79,34 +81,36 @@ def upsert_preset(preset: dict[str, Any]) -> dict[str, Any]:
     except ValueError as e:
         raise ValueError(f"Invalid args (shell-quoting): {e}")
 
-    data = _load_raw()
-    presets = data["presets"]
-    preset_id = (preset.get("id") or "").strip() or _slugify(name)
+    with presets_lock:
+        data = _load_raw()
+        presets = data["presets"]
+        preset_id = (preset.get("id") or "").strip() or _slugify(name)
 
-    # Disambiguate auto-generated IDs against existing entries
-    if not preset.get("id"):
-        base, n = preset_id, 2
-        existing = {p["id"] for p in presets}
-        while preset_id in existing:
-            preset_id = f"{base}-{n}"
-            n += 1
+        # Disambiguate auto-generated IDs against existing entries
+        if not preset.get("id"):
+            base, n = preset_id, 2
+            existing = {p["id"] for p in presets}
+            while preset_id in existing:
+                preset_id = f"{base}-{n}"
+                n += 1
 
-    record = {"id": preset_id, "name": name, "args": args, "description": description}
-    for i, p in enumerate(presets):
-        if p.get("id") == preset_id:
-            presets[i] = record
-            break
-    else:
-        presets.append(record)
-    _save_raw(data)
+        record = {"id": preset_id, "name": name, "args": args, "description": description}
+        for i, p in enumerate(presets):
+            if p.get("id") == preset_id:
+                presets[i] = record
+                break
+        else:
+            presets.append(record)
+        _save_raw(data)
     return record
 
 
 def delete_preset(preset_id: str) -> bool:
-    data = _load_raw()
-    before = len(data["presets"])
-    data["presets"] = [p for p in data["presets"] if p.get("id") != preset_id]
-    if len(data["presets"]) == before:
-        return False
-    _save_raw(data)
+    with presets_lock:
+        data = _load_raw()
+        before = len(data["presets"])
+        data["presets"] = [p for p in data["presets"] if p.get("id") != preset_id]
+        if len(data["presets"]) == before:
+            return False
+        _save_raw(data)
     return True

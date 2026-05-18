@@ -1,7 +1,6 @@
 """Download GGUF models from HuggingFace."""
 
 import asyncio
-import re
 import time
 from pathlib import Path
 from urllib.parse import urlparse, unquote
@@ -12,6 +11,10 @@ from config import get_models_dir
 
 # Active download state — keyed by filename
 _downloads: dict[str, dict] = {}
+
+# Only accept URLs from these hosts. httpx follows redirects to the HF CDN,
+# but the user-supplied URL itself must belong to HF — guards against SSRF.
+_ALLOWED_HOSTS = {"huggingface.co", "hf.co"}
 
 
 def list_models() -> list[dict]:
@@ -35,24 +38,53 @@ def get_downloads() -> dict[str, dict]:
     return dict(_downloads)
 
 
+def resolve_model_path(filename: str) -> Path | None:
+    """Return the canonical path for a model filename inside the models dir.
+
+    Returns None if the filename would escape the models dir (path traversal)
+    or has an unsupported extension.
+    """
+    if not filename or filename in (".", ".."):
+        return None
+    models_dir = get_models_dir().resolve()
+    candidate = (models_dir / filename).resolve()
+    try:
+        candidate.relative_to(models_dir)
+    except ValueError:
+        return None
+    if candidate.suffix not in (".gguf", ".bin"):
+        return None
+    return candidate
+
+
 def parse_hf_url(url: str) -> tuple[str, str]:
     """Parse a HuggingFace URL into (download_url, filename).
 
     Supports formats:
       - https://huggingface.co/{user}/{repo}/resolve/main/{file}.gguf
       - https://huggingface.co/{user}/{repo}/blob/main/{file}.gguf  (auto-converts to resolve)
-      - Direct CDN links (cdn-lfs.huggingface.co/...)
     """
     url = url.strip()
+    if not url:
+        raise ValueError("URL is required")
 
     # Convert blob URLs to resolve URLs
     url = url.replace("/blob/", "/resolve/")
 
     parsed = urlparse(url)
-    filename = unquote(Path(parsed.path).name)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError("URL must use http or https")
+    if parsed.hostname not in _ALLOWED_HOSTS:
+        raise ValueError(
+            f"Only huggingface.co URLs are allowed (got {parsed.hostname or 'no host'})"
+        )
 
+    filename = unquote(Path(parsed.path).name)
     if not filename.endswith((".gguf", ".bin")):
         raise ValueError(f"URL does not point to a .gguf or .bin file: {filename}")
+    # Reject filenames with path separators or traversal segments
+    if "/" in filename or "\\" in filename or filename in (".", ".."):
+        raise ValueError(f"Suspicious filename in URL: {filename}")
 
     return url, filename
 
@@ -60,7 +92,9 @@ def parse_hf_url(url: str) -> tuple[str, str]:
 async def download_model(url: str) -> str:
     """Download a GGUF model from a URL. Returns the filename."""
     download_url, filename = parse_hf_url(url)
-    dest = get_models_dir() / filename
+    dest = resolve_model_path(filename)
+    if dest is None:
+        raise ValueError(f"Invalid destination filename: {filename}")
 
     if dest.exists():
         _downloads[filename] = {
@@ -140,9 +174,9 @@ async def _download_file(url: str, dest: Path, filename: str):
 
 
 def delete_model(filename: str) -> bool:
-    """Delete a downloaded model file."""
-    path = get_models_dir() / filename
-    if path.exists() and path.suffix in (".gguf", ".bin"):
+    """Delete a downloaded model file. Rejects paths that escape the models dir."""
+    path = resolve_model_path(filename)
+    if path and path.is_file():
         path.unlink()
         return True
     return False

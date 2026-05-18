@@ -2,13 +2,30 @@
 from __future__ import annotations
 
 import struct
+from collections import OrderedDict
 from pathlib import Path
 
 GGUF_MAGIC = b"GGUF"
 
 # Cache: path -> (mtime_ns, size, result). GGUF headers are immutable
-# once written, so (mtime, size) is a sufficient cache key.
-_meta_cache: dict[str, tuple[int, int, dict | None]] = {}
+# once written, so (mtime, size) is a sufficient cache key. Bounded LRU
+# so a long-running process can't grow it unboundedly.
+_CACHE_MAX = 256
+_meta_cache: "OrderedDict[str, tuple[int, int, dict | None]]" = OrderedDict()
+
+
+def _cache_get(key: str) -> tuple[int, int, dict | None] | None:
+    entry = _meta_cache.get(key)
+    if entry is not None:
+        _meta_cache.move_to_end(key)
+    return entry
+
+
+def _cache_put(key: str, value: tuple[int, int, dict | None]) -> None:
+    _meta_cache[key] = value
+    _meta_cache.move_to_end(key)
+    while len(_meta_cache) > _CACHE_MAX:
+        _meta_cache.popitem(last=False)
 
 # Value types
 _UINT8, _INT8, _UINT16, _INT16, _UINT32, _INT32 = 0, 1, 2, 3, 4, 5
@@ -96,20 +113,23 @@ def read_metadata(path: str | Path) -> dict | None:
     path = Path(path)
     key = str(path)
     st = path.stat()
-    cached = _meta_cache.get(key)
+    cached = _cache_get(key)
     if cached is not None and cached[0] == st.st_mtime_ns and cached[1] == st.st_size:
         return cached[2]
 
     size_mb = st.st_size / (1024 * 1024)
 
+    def cache_none() -> None:
+        _cache_put(key, (st.st_mtime_ns, st.st_size, None))
+
     try:
         with open(path, "rb") as f:
             if f.read(4) != GGUF_MAGIC:
-                _meta_cache[key] = (st.st_mtime_ns, st.st_size, None)
+                cache_none()
                 return None
             version = struct.unpack("<I", f.read(4))[0]
             if version not in (2, 3):
-                _meta_cache[key] = (st.st_mtime_ns, st.st_size, None)
+                cache_none()
                 return None
             _tensor_count = struct.unpack("<Q", f.read(8))[0]
             kv_count = struct.unpack("<Q", f.read(8))[0]
@@ -120,7 +140,7 @@ def read_metadata(path: str | Path) -> dict | None:
                 vtype = struct.unpack("<I", f.read(4))[0]
                 meta[k] = _read_val(f, vtype)
     except Exception:
-        _meta_cache[key] = (st.st_mtime_ns, st.st_size, None)
+        cache_none()
         return None
 
     n_layers = _find(meta, "block_count")
@@ -129,13 +149,13 @@ def read_metadata(path: str | Path) -> dict | None:
     embedding_dim = _find(meta, "embedding_length")
 
     if not all(v is not None for v in (n_layers, n_kv_heads, embedding_dim)):
-        _meta_cache[key] = (st.st_mtime_ns, st.st_size, None)
+        cache_none()
         return None
     # Some models store n_kv_heads = 0 meaning "same as n_heads"
     if n_kv_heads == 0:
         n_kv_heads = _find(meta, "attention.head_count")
     if not n_kv_heads:
-        _meta_cache[key] = (st.st_mtime_ns, st.st_size, None)
+        cache_none()
         return None
 
     result = {
@@ -144,5 +164,5 @@ def read_metadata(path: str | Path) -> dict | None:
         "embedding_dim": int(embedding_dim),
         "size_mb": size_mb,
     }
-    _meta_cache[key] = (st.st_mtime_ns, st.st_size, result)
+    _cache_put(key, (st.st_mtime_ns, st.st_size, result))
     return result

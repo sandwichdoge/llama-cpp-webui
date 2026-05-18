@@ -3,7 +3,13 @@
 import json
 import os
 import sys
+import threading
 from pathlib import Path
+
+# Coarse per-file locks for the small JSON files we read/modify in place.
+# Process-local — single-process assumption matches the rest of the app.
+_settings_lock = threading.Lock()
+_presets_lock = threading.Lock()
 
 
 def get_data_dir() -> Path:
@@ -49,23 +55,46 @@ def get_presets_path() -> Path:
     return get_data_dir() / "presets.json"
 
 
+# ── JSON helpers ──────────────────────────────────────
+
+def atomic_write_json(path: Path, data) -> None:
+    """Write JSON atomically: write to a temp file, then rename."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2))
+    tmp.replace(path)
+
+
+# Re-exported so presets.py can share the same primitive.
+presets_lock = _presets_lock
+
+
 # ── Settings persistence ──────────────────────────────
 
 def load_all_settings() -> dict:
     p = get_settings_path()
-    if p.exists():
-        try:
-            return json.loads(p.read_text())
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {}
+    with _settings_lock:
+        if p.exists():
+            try:
+                return json.loads(p.read_text())
+            except (json.JSONDecodeError, OSError):
+                pass
+        return {}
 
 
-def save_all_settings(data: dict):
-    get_settings_path().write_text(json.dumps(data, indent=2))
+def save_all_settings(data: dict) -> None:
+    with _settings_lock:
+        atomic_write_json(get_settings_path(), data)
 
 
-def save_model_settings(filename: str, settings: dict):
-    all_s = load_all_settings()
-    all_s[filename] = settings
-    save_all_settings(all_s)
+def save_model_settings(filename: str, settings: dict) -> None:
+    with _settings_lock:
+        p = get_settings_path()
+        all_s: dict = {}
+        if p.exists():
+            try:
+                all_s = json.loads(p.read_text())
+            except (json.JSONDecodeError, OSError):
+                all_s = {}
+        all_s[filename] = settings
+        atomic_write_json(p, all_s)

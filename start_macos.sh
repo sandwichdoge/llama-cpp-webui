@@ -36,6 +36,11 @@ if [ ! -d ".venv" ]; then
 fi
 
 source .venv/bin/activate
-pip install -q -r requirements.txt
+
+# Only re-install dependencies when requirements.txt changes (cheap mtime check).
+marker=".venv/.deps-installed"
+if [ ! -f "$marker" ] || [ requirements.txt -nt "$marker" ]; then
+  pip install -q -r requirements.txt && touch "$marker"
+fi
 
 exec python run.py "$@"

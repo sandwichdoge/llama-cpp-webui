@@ -67,7 +67,18 @@ if not exist .venv (
 )
 
 call .venv\Scripts\activate.bat
-pip install -q -r requirements.txt
+
+:: Only re-install dependencies when requirements.txt is newer than the marker.
+set "DEPS_MARKER=.venv\.deps-installed"
+set "REINSTALL=1"
+if exist "%DEPS_MARKER%" (
+    for %%F in (requirements.txt) do set "REQ_DATE=%%~tF"
+    for %%F in ("%DEPS_MARKER%") do set "MARK_DATE=%%~tF"
+    if "!REQ_DATE!" leq "!MARK_DATE!" set "REINSTALL=0"
+)
+if "!REINSTALL!"=="1" (
+    pip install -q -r requirements.txt && type nul > "%DEPS_MARKER%"
+)
 
 python run.py %*
 exit /b 0

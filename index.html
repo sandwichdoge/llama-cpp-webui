@@ -322,6 +322,10 @@
 const { useState, useEffect, useRef, useCallback } = React;
 
 // ── VRAM estimator ───────────────────────────────────────
+// Heuristic regression fitted against measured VRAM use for a range of
+// llama.cpp builds + GGUF quants. Magic constants come from that fit
+// (see e.g. https://huggingface.co/posts/MaziyarPanahi/284088999786828) —
+// expect ±10% error, and revisit when llama.cpp changes its memory layout.
 const CACHE_BITS = { f16: 16, bf16: 16, q8_0: 8, q4_0: 4, q4_1: 4, q5_0: 5, q5_1: 5 };
 
 function estimateVram(meta, ngl, ctx, cacheK, cacheV) {

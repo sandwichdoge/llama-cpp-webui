@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# App data
+data/
+.tools/
+.gpu_choice
+
+# IDE / agents
+.claude/
+.kilo/
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
