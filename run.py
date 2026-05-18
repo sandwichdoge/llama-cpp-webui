@@ -40,7 +40,9 @@ def main():
     print(f"  → Inference API:  (shown after model load)\n")
 
     logging.getLogger("uvicorn.access").addFilter(PollFilter())
-    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+    # workers=1 is load-bearing: config.py's JSON persistence uses threading.Lock,
+    # which is process-local. Multiple workers would race and lose settings updates.
+    uvicorn.run(app, host=args.host, port=args.port, log_level="info", workers=1)
 
 
 if __name__ == "__main__":

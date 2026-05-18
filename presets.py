@@ -29,7 +29,7 @@ def _load_raw() -> dict[str, Any]:
     p = get_presets_path()
     if p.exists():
         try:
-            data = json.loads(p.read_text())
+            data = json.loads(p.read_text(encoding="utf-8"))
             if isinstance(data, dict) and isinstance(data.get("presets"), list):
                 return data
         except (json.JSONDecodeError, OSError):

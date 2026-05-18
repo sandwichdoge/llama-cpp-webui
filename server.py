@@ -74,11 +74,18 @@ _health_client: httpx.AsyncClient | None = None
 
 
 def _persist_model_settings() -> None:
-    """Save per-model settings to disk after successful model load."""
+    """Save per-model settings to disk after successful model load.
+
+    Swallows errors so a transient disk problem can't kill the health watcher
+    that calls us — losing one save is fine; losing the watcher is not.
+    """
     filename = _state.get("model")
     settings = _state.get("model_settings")
     if filename and settings:
-        save_model_settings(filename, settings)
+        try:
+            save_model_settings(filename, settings)
+        except Exception:
+            log.exception("Failed to persist model settings for %s", filename)
 
 
 def get_status() -> dict:

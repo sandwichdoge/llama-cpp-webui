@@ -7,7 +7,7 @@ from urllib.parse import urlparse, unquote
 
 import httpx
 
-from config import get_models_dir
+from config import delete_model_settings, get_models_dir
 
 # Active download state — keyed by filename
 _downloads: dict[str, dict] = {}
@@ -178,6 +178,7 @@ def delete_model(filename: str) -> bool:
     path = resolve_model_path(filename)
     if path and path.is_file():
         path.unlink()
+        delete_model_settings(filename)
         return True
     return False
 
