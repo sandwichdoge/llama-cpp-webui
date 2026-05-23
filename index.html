@@ -793,7 +793,11 @@ function ModelSection({ modelsRef }) {
   const handleSelect = (filename) => {
     setSelected(filename);
     const model = mainModels.find(m => m.filename === filename);
-    if (model?.settings) applySettings(model.settings);
+    // Apply the model's saved settings if it has any; otherwise reset every
+    // field to its default. applySettings(undefined) resets because each field
+    // falls back to its default via `??`. Without this, picking a brand new
+    // model would leave the previously selected model's config in the form.
+    applySettings(model?.settings);
   };
 
   const handleLoad = () => {
