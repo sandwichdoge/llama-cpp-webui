@@ -124,36 +124,49 @@ async def download_model(url: str) -> str:
         _downloads[filename]["progress"] = 100
     except asyncio.CancelledError:
         _downloads[filename]["status"] = "cancelled"
-        if dest.exists():
-            dest.unlink()
+        # Cancel means discard — drop the partial so a fresh paste starts over.
+        _cleanup_partial(dest)
         raise
     except Exception as e:
         _downloads[filename]["status"] = "failed"
         _downloads[filename]["error"] = str(e)
-        # Clean up partial file
-        if dest.exists():
-            dest.unlink()
+        # Keep the .part file so re-pasting the URL resumes from where it stopped.
         raise
 
     return filename
 
 
 async def _download_file(url: str, dest: Path, filename: str):
-    """Download with progress tracking."""
+    """Download with progress tracking, resuming from a .part file if present."""
     tmp = dest.parent / (dest.name + ".part")
 
+    # Resume from a previously interrupted download if a partial file exists.
+    resume_from = tmp.stat().st_size if tmp.exists() else 0
+    headers = {"Range": f"bytes={resume_from}-"} if resume_from else {}
+
     async with httpx.AsyncClient(follow_redirects=True, timeout=httpx.Timeout(30, read=300)) as client:
-        async with client.stream("GET", url) as resp:
+        async with client.stream("GET", url, headers=headers) as resp:
             resp.raise_for_status()
-            total = int(resp.headers.get("content-length", 0))
+
+            # A 206 confirms the resume; any other status (e.g. 200) means the
+            # server ignored the Range header, so start over from the beginning.
+            if resume_from and resp.status_code == 206:
+                # Content-Range: "bytes start-end/total" — total is the full size.
+                content_range = resp.headers.get("content-range", "")
+                total = int(content_range.rsplit("/", 1)[-1]) if "/" in content_range else 0
+            else:
+                resume_from = 0
+                total = int(resp.headers.get("content-length", 0))
+
             _downloads[filename]["total"] = total
 
-            downloaded = 0
+            downloaded = resume_from
             last_time = time.monotonic()
-            last_bytes = 0
+            last_bytes = downloaded
             chunk_size = 1024 * 1024  # 1 MB
 
-            with open(tmp, "wb") as f:
+            mode = "ab" if resume_from else "wb"
+            with open(tmp, mode) as f:
                 async for chunk in resp.aiter_bytes(chunk_size):
                     f.write(chunk)
                     downloaded += len(chunk)
@@ -171,6 +184,13 @@ async def _download_file(url: str, dest: Path, filename: str):
                         _downloads[filename]["progress"] = round(downloaded / total * 100, 1)
 
     tmp.rename(dest)
+
+
+def _cleanup_partial(dest: Path):
+    """Remove the .part file for a destination, if present."""
+    tmp = dest.parent / (dest.name + ".part")
+    if tmp.exists():
+        tmp.unlink()
 
 
 def delete_model(filename: str) -> bool:
