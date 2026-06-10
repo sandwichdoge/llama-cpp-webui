@@ -126,10 +126,10 @@ def _build_command(req: LoadRequest, binary: Path, model: Path) -> list[str]:
 
     if req.draft_model_path.strip():
         draft_path = Path(req.draft_model_path.strip())
-        cmd += ["--spec-type", "mtp",
+        cmd += ["--spec-type", "draft-mtp",
                 "-md", str(draft_path),
                 "-ngld", str(req.draft_gpu_layers),
-                "--draft-max", str(req.draft_max),
+                "--spec-draft-n-max", str(req.draft_max),
                 "--draft-p-min", str(req.draft_p_min)]
 
     if req.tensor_split.strip():
@@ -243,14 +243,21 @@ async def shutdown() -> None:
 
 
 async def _log_reader() -> None:
-    """Read llama-server stdout and store in _log_lines."""
+    """Read llama-server stdout, store in _log_lines, and echo to the console.
+
+    Echoing to our own stdout means llama-server's startup/error output (which
+    is the only place the real reason for a failed load shows up) lands in the
+    same terminal as the web UI process, instead of being swallowed by the
+    in-memory buffer that only the UI reads.
+    """
     try:
-        while _process and _process.returncode is None and _process.stdout is not None:
+        while _process is not None and _process.stdout is not None:
             line = await _process.stdout.readline()
             if not line:
-                break
+                break  # EOF: process closed its stdout (likely exited)
             decoded = line.decode(errors="replace").rstrip()
             _log_lines.append(decoded)
+            print(f"[llama-server] {decoded}", flush=True)
             if len(_log_lines) > _LOG_MAX * 2:
                 del _log_lines[:_LOG_MAX]
     except asyncio.CancelledError:
