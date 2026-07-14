@@ -70,6 +70,23 @@
     padding: 0.15rem 0.5rem;
     border-radius: 4px;
   }
+  .tabs { margin-left: auto; display: flex; gap: 0.4rem; }
+  .tab {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    padding: 0.3rem 0.8rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg-2);
+    color: var(--text-2);
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .tab.active {
+    border-color: var(--accent);
+    background: var(--accent-glow);
+    color: var(--accent);
+  }
 
   /* ── Section cards ─────────────────────── */
   .card {
@@ -1186,19 +1203,559 @@ function ModelSection({ modelsRef }) {
   );
 }
 
+// ── tabbyAPI Install Section ─────────────────────────────
+function TabbyBuildSection() {
+  const { data: status, refresh, setPolling } = useFetch("/api/tabby/build/status");
+  const [showLog, setShowLog] = useState(false);
+
+  // Poll only while installing
+  useEffect(() => {
+    setPolling(status?.status === "installing");
+  }, [status?.status]);
+
+  if (!status) return null;
+
+  const isInstalling = status.status === "installing";
+  const dotClass = {
+    idle: "dot-idle", installing: "dot-spin", success: "dot-ok", failed: "dot-err"
+  }[status.status] || "dot-idle";
+
+  const handleInstall = () => {
+    api.post("/api/tabby/build/start")
+      .then(() => { setPolling(true); refresh(); })
+      .catch(e => alert(e.message));
+  };
+
+  return (
+    <div className="card">
+      <div className="card-title">
+        <span className={`dot ${dotClass}`} />
+        tabbyAPI engine (exllamav3)
+      </div>
+
+      <div className="info-row">
+        <div className="info-item">
+          <label>Status</label>
+          <span>{status.status}</span>
+        </div>
+        <div className="info-item">
+          <label>Installed</label>
+          <span>{status.installed ? "✓ ready" : "✗ not installed"}</span>
+        </div>
+      </div>
+
+      <div style={{ fontSize: "0.72rem", color: "var(--text-2)", marginBottom: "0.75rem" }}>
+        Clones tabbyAPI into the data directory and installs it into its own venv
+        (torch + exllamav3). First install downloads several GB of wheels.
+      </div>
+
+      {isInstalling && (
+        <div style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", color: "var(--text-2)", marginBottom: "0.75rem" }}>
+          ▸ {status.progress}
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+        <button className="btn-primary" onClick={handleInstall} disabled={isInstalling}>
+          {isInstalling ? "Installing…" : status.installed ? "Update" : status.repo_cloned ? "Resume Install" : "Install tabbyAPI"}
+        </button>
+        {status.log && (
+          <button className="btn-secondary btn-sm" onClick={() => setShowLog(v => !v)}>
+            {showLog ? "Hide Log" : "Show Log"}
+          </button>
+        )}
+      </div>
+
+      {status.error && (
+        <div style={{ marginTop: "0.75rem", fontFamily: "var(--font-mono)", fontSize: "0.75rem", color: "var(--red)" }}>
+          Error: {status.error.slice(0, 300)}
+        </div>
+      )}
+
+      {showLog && status.log && (
+        <div className="log-box">{status.log}</div>
+      )}
+    </div>
+  );
+}
+
+// ── tabbyAPI Download Section ────────────────────────────
+function TabbyDownloadSection({ refreshModels }) {
+  const [repoId, setRepoId] = useState("");
+  const [revision, setRevision] = useState("");
+  const [error, setError] = useState("");
+  const { data: modelsData, refresh, setPolling } = useFetch("/api/tabby/models", 2000);
+
+  const downloads = modelsData ? Object.values(modelsData.downloads).filter(d => d.status === "downloading") : [];
+  const failed = modelsData ? Object.values(modelsData.downloads).filter(d => d.status === "failed") : [];
+
+  // Poll only while downloads are active
+  useEffect(() => {
+    setPolling(downloads.length > 0);
+    // When a download finishes, also refresh the model section
+    if (modelsData && downloads.length === 0) refreshModels?.();
+  }, [downloads.length]);
+
+  const handleDownload = () => {
+    setError("");
+    if (!repoId.trim()) return;
+    api.post("/api/tabby/models/download", { repo_id: repoId.trim(), revision: revision.trim() })
+      .then(() => { setRepoId(""); setRevision(""); setPolling(true); refresh(); })
+      .catch(e => setError(e.message));
+  };
+
+  return (
+    <div className="card">
+      <div className="card-title">
+        <span className={`dot ${downloads.length > 0 ? "dot-spin" : "dot-idle"}`} />
+        Download EXL3 Models
+      </div>
+
+      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.5rem" }}>
+        <input
+          type="text"
+          placeholder="turboderp/Llama-3.2-1B-exl3"
+          value={repoId}
+          onChange={e => setRepoId(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter") handleDownload(); }}
+          style={{ flex: 1 }}
+        />
+        <input
+          type="text"
+          placeholder="revision, e.g. 6.0bpw"
+          value={revision}
+          onChange={e => setRevision(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter") handleDownload(); }}
+          style={{ width: "160px" }}
+          title="Branch/tag to download. exl3 repos usually keep each quant in its own branch; main often has no weights."
+        />
+        <button className="btn-primary" onClick={handleDownload} disabled={downloads.length > 0} style={downloads.length > 0 ? { opacity: 0.45, cursor: "not-allowed", pointerEvents: "none" } : {}}>Download</button>
+      </div>
+
+      {error && (
+        <div style={{ fontFamily: "var(--font-mono)", fontSize: "0.72rem", color: "var(--red)", marginBottom: "0.5rem" }}>
+          {error}
+        </div>
+      )}
+
+      <div style={{ fontSize: "0.72rem", color: "var(--text-2)", marginBottom: "0.5rem" }}>
+        Enter a HuggingFace repo id of an exl3-quantized model (the whole repo is downloaded).
+        exl3 quants usually live in <b>branches</b> (check the repo's revisions, e.g. <code>6.0bpw</code>) — main often holds no weights.
+        Requires tabbyAPI to be running — downloads go through its API.
+      </div>
+
+      {modelsData?.models_dir && (
+        <div style={{ fontSize: "0.68rem", fontFamily: "var(--font-mono)", color: "var(--text-2)", marginBottom: "0.5rem", opacity: 0.7 }}>
+          Models directory: {modelsData.models_dir}
+        </div>
+      )}
+
+      {downloads.map(dl => (
+        <div key={dl.repo_id} className="download-item">
+          <div className="download-header">
+            <span className="model-name" style={{ fontSize: "0.78rem" }}>{dl.repo_id}</span>
+            <span className="download-stats">downloading… (no progress info)</span>
+          </div>
+        </div>
+      ))}
+      {failed.map(dl => (
+        <div key={dl.repo_id} className="download-item">
+          <div className="download-header">
+            <span className="model-name" style={{ fontSize: "0.78rem" }}>{dl.repo_id}</span>
+            <span className="download-stats" style={{ color: "var(--red)" }}>failed: {(dl.error || "").slice(0, 120)}</span>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── tabbyAPI Server / Model Section ──────────────────────
+function TabbyServerSection({ modelsRef }) {
+  const { data: modelsData, refresh: refreshModels } = useFetch("/api/tabby/models");
+  const { data: status, refresh: refreshStatus, setPolling } = useFetch("/api/tabby/server/status");
+
+  useEffect(() => { if (modelsRef) modelsRef.current = refreshModels; }, [refreshModels]);
+
+  const [selected, setSelected] = useState("");
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showLog, setShowLog] = useState(false);
+
+  // Process params
+  const [port, setPort] = useState(5001);
+  const [bindHost, setBindHost] = useState("127.0.0.1");
+
+  // Model load params (0 / "" = tabby default)
+  const [maxSeqLen, setMaxSeqLen] = useState(0);
+  const [cacheSize, setCacheSize] = useState(0);
+  const [cacheMode, setCacheMode] = useState("");
+  const [gpuSplitAuto, setGpuSplitAuto] = useState(true);
+  const [gpuSplit, setGpuSplit] = useState("");
+  const [tensorParallel, setTensorParallel] = useState(false);
+  const [chunkSize, setChunkSize] = useState(0);
+  const [ropeScale, setRopeScale] = useState(0);
+  const [promptTemplate, setPromptTemplate] = useState("");
+  const [vision, setVision] = useState(false);
+  const [draftModel, setDraftModel] = useState("");
+
+  const models = (modelsData?.models || []).filter(m => m.valid);
+  const procStatus = status?.status;
+  const model = status?.model || {};
+  const isUp = procStatus === "running" || procStatus === "starting";
+
+  useEffect(() => {
+    setPolling(procStatus === "starting" || model.status === "loading" || showLog);
+  }, [procStatus, model.status, showLog]);
+
+  const applySettings = (s) => {
+    const d = s || {};
+    setMaxSeqLen(d.max_seq_len ?? 0);
+    setCacheSize(d.cache_size ?? 0);
+    setCacheMode(d.cache_mode ?? "");
+    setGpuSplitAuto(d.gpu_split_auto ?? true);
+    setGpuSplit(d.gpu_split ?? "");
+    setTensorParallel(d.tensor_parallel ?? false);
+    setChunkSize(d.chunk_size ?? 0);
+    setRopeScale(d.rope_scale ?? 0);
+    setPromptTemplate(d.prompt_template ?? "");
+    setVision(d.vision ?? false);
+    setDraftModel(d.draft_model_name ?? "");
+  };
+
+  const initRef = useRef(false);
+  useEffect(() => {
+    if (initRef.current || models.length === 0) return;
+    const preferred = models.find(m => m.settings) || models[0];
+    setSelected(preferred.name);
+    applySettings(preferred.settings);
+    initRef.current = true;
+  }, [models.length]);
+
+  const selectedModel = models.find(m => m.name === selected);
+
+  const handleSelect = (name) => {
+    setSelected(name);
+    // Saved settings if any, otherwise reset every field to its default
+    applySettings(models.find(m => m.name === name)?.settings);
+  };
+
+  const handleStartServer = () => {
+    api.post("/api/tabby/server/start", { port, bind_host: bindHost })
+      .then(() => { setPolling(true); refreshStatus(); })
+      .catch(e => alert(e.message));
+  };
+
+  const handleStopServer = () => {
+    api.post("/api/tabby/server/stop").then(refreshStatus).catch(e => alert(e.message));
+  };
+
+  const handleLoad = () => {
+    if (!selectedModel) return;
+    api.post("/api/tabby/server/load", {
+      model_name: selectedModel.name,
+      max_seq_len: maxSeqLen, cache_size: cacheSize, cache_mode: cacheMode,
+      gpu_split_auto: gpuSplitAuto, gpu_split: gpuSplit,
+      tensor_parallel: tensorParallel, chunk_size: chunkSize, rope_scale: ropeScale,
+      prompt_template: promptTemplate, vision,
+      draft_model_name: draftModel,
+    }).then(() => { setPolling(true); refreshStatus(); })
+      .catch(e => alert(e.message));
+  };
+
+  const handleUnload = () => {
+    api.post("/api/tabby/server/unload").then(refreshStatus).catch(e => alert(e.message));
+  };
+
+  const handleDelete = () => {
+    if (!selectedModel) return;
+    if (confirm(`Delete ${selectedModel.name}?`)) {
+      api.del(`/api/tabby/models/${encodeURIComponent(selectedModel.name)}`).then(res => {
+        if (res.detail) { alert(res.detail); return; }
+        refreshModels();
+        setSelected(models.length > 1 ? models.find(m => m.name !== selectedModel.name)?.name || "" : "");
+      });
+    }
+  };
+
+  const dotClass = model.status === "loaded" ? "dot-ok" : {
+    stopped: "dot-idle", starting: "dot-spin", running: "dot-warn", error: "dot-err"
+  }[procStatus] || "dot-idle";
+
+  const labelStyle = { display: "block", fontSize: "0.68rem", fontFamily: "var(--font-mono)", color: "var(--text-2)", letterSpacing: "0.05em", textTransform: "uppercase", marginBottom: "0.25rem" };
+
+  return (
+    <div className="card">
+      <div className="card-title">
+        <span className={`dot ${dotClass}`} />
+        tabbyAPI Inference Server
+        {model.status === "loaded" && (
+          <span style={{ marginLeft: "auto", fontSize: "0.68rem", color: "var(--green)", fontFamily: "var(--font-mono)" }}>
+            ● LIVE
+          </span>
+        )}
+      </div>
+
+      {!isUp && (
+        <>
+          <div className="params-grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
+            <div>
+              <label>Port</label>
+              <input type="number" value={port} onChange={e => setPort(+e.target.value)} />
+            </div>
+            <div>
+              <label>Bind Host</label>
+              <input type="text" value={bindHost} onChange={e => setBindHost(e.target.value)}
+                title='Use "0.0.0.0" to expose the inference port to the LAN (auth stays enabled).' />
+            </div>
+          </div>
+          <button className="btn-primary" onClick={handleStartServer}>
+            Start tabbyAPI
+          </button>
+          {procStatus === "error" && status?.error && (
+            <div style={{ marginTop: "0.75rem", fontFamily: "var(--font-mono)", fontSize: "0.75rem", color: "var(--red)" }}>
+              Error: {status.error}
+            </div>
+          )}
+        </>
+      )}
+
+      {isUp && (
+        <>
+          <div className="info-row">
+            <div className="info-item">
+              <label>Status</label>
+              <span>{procStatus}{model.status !== "none" ? ` · model ${model.status}` : ""}</span>
+            </div>
+            <div className="info-item">
+              <label>Port</label>
+              <span>{status.port}</span>
+            </div>
+            <div className="info-item">
+              <label>PID</label>
+              <span>{status.pid}</span>
+            </div>
+            {model.name && (
+              <div className="info-item">
+                <label>Model</label>
+                <span>{model.name}</span>
+              </div>
+            )}
+          </div>
+
+          {procStatus === "running" && model.status !== "loaded" && model.status !== "loading" && (
+            <>
+              <div style={{ marginBottom: "1rem" }}>
+                <label style={labelStyle}>Model</label>
+                {models.length === 0 ? (
+                  <div style={{ fontSize: "0.82rem", color: "var(--text-2)", padding: "0.5rem 0" }}>
+                    No exl3 models yet. Download one above.
+                  </div>
+                ) : (
+                  <select value={selected} onChange={e => handleSelect(e.target.value)}>
+                    {models.map(m => (
+                      <option key={m.name} value={m.name}>
+                        {m.name}  ({m.size_human}){m.settings ? " ★" : ""}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              <div style={{ marginBottom: "1rem" }}>
+                <label style={labelStyle}>Draft Model (speculative decoding)</label>
+                <select value={draftModel} onChange={e => setDraftModel(e.target.value)}>
+                  <option value="">None (no speculative decoding)</option>
+                  {models.filter(m => m.name !== selected).map(m => (
+                    <option key={m.name} value={m.name}>
+                      {m.name}  ({m.size_human})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="params-grid">
+                <div>
+                  <label>Max Seq Len (0=auto)</label>
+                  <input type="number" value={maxSeqLen} onChange={e => setMaxSeqLen(+e.target.value)} />
+                </div>
+                <div>
+                  <label>Cache Size (0=default)</label>
+                  <input type="number" value={cacheSize} onChange={e => setCacheSize(+e.target.value)}
+                    title="KV cache size in tokens; must be a multiple of 256." />
+                </div>
+                <div>
+                  <label>Cache Mode</label>
+                  <input type="text" value={cacheMode} onChange={e => setCacheMode(e.target.value)}
+                    placeholder="6,6 (k,v bits) or FP16"
+                    title="exl3: quantized cache as k_bits,v_bits (2-8), e.g. 6,6. Empty = FP16." />
+                </div>
+              </div>
+
+              <div
+                onClick={() => setShowAdvanced(v => !v)}
+                style={{ cursor: "pointer", fontSize: "0.72rem", fontFamily: "var(--font-mono)", color: "var(--text-2)", marginBottom: showAdvanced ? "0.75rem" : "1rem", userSelect: "none", letterSpacing: "0.05em" }}
+              >
+                {showAdvanced ? "▾" : "▸"} ADVANCED
+              </div>
+
+              {showAdvanced && (
+                <>
+                  <div className="params-grid">
+                    <div>
+                      <label>GPU Split (GB, e.g. 12,24)</label>
+                      <input type="text" value={gpuSplit} onChange={e => setGpuSplit(e.target.value)}
+                        placeholder="empty = auto split" />
+                    </div>
+                    <div style={{ display: "flex", alignItems: "end", gap: "0.5rem", paddingBottom: "0.15rem" }}>
+                      <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", cursor: "pointer", whiteSpace: "nowrap" }}>
+                        <input type="checkbox" checked={gpuSplitAuto} onChange={e => setGpuSplitAuto(e.target.checked)}
+                          disabled={!!gpuSplit.trim()}
+                          style={{ width: "auto", accentColor: "var(--accent)" }} />
+                        <span style={{ fontSize: "0.72rem", fontFamily: "var(--font-mono)", color: "var(--text-1)" }}>GPU split auto</span>
+                      </label>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "end", gap: "0.5rem", paddingBottom: "0.15rem" }}>
+                      <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", cursor: "pointer", whiteSpace: "nowrap" }}>
+                        <input type="checkbox" checked={tensorParallel} onChange={e => setTensorParallel(e.target.checked)}
+                          style={{ width: "auto", accentColor: "var(--accent)" }} />
+                        <span style={{ fontSize: "0.72rem", fontFamily: "var(--font-mono)", color: "var(--text-1)" }}>Tensor parallel</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="params-grid">
+                    <div>
+                      <label>Chunk Size (0=default)</label>
+                      <input type="number" value={chunkSize} onChange={e => setChunkSize(+e.target.value)}
+                        title="Prompt ingestion chunk size (512-4096)." />
+                    </div>
+                    <div>
+                      <label>Rope Scale (0=default)</label>
+                      <input type="number" value={ropeScale} onChange={e => setRopeScale(+e.target.value)} step="0.1" />
+                    </div>
+                    <div style={{ display: "flex", alignItems: "end", gap: "0.5rem", paddingBottom: "0.15rem" }}>
+                      <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", cursor: "pointer", whiteSpace: "nowrap" }}>
+                        <input type="checkbox" checked={vision} onChange={e => setVision(e.target.checked)}
+                          style={{ width: "auto", accentColor: "var(--accent)" }} />
+                        <span style={{ fontSize: "0.72rem", fontFamily: "var(--font-mono)", color: "var(--text-1)" }}>Vision</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div style={{ marginBottom: "1rem" }}>
+                    <label style={labelStyle}>Prompt Template (empty = auto)</label>
+                    <input type="text" value={promptTemplate} onChange={e => setPromptTemplate(e.target.value)}
+                      placeholder="template name from tabbyAPI's templates folder" />
+                  </div>
+                </>
+              )}
+
+              <div style={{ display: "flex", gap: "0.5rem" }}>
+                <button className="btn-primary" onClick={handleLoad} disabled={!selectedModel}>
+                  Load Model
+                </button>
+                {selectedModel && (
+                  <button className="btn-danger btn-sm" onClick={handleDelete}>
+                    Delete
+                  </button>
+                )}
+                <button className="btn-danger btn-sm" onClick={handleStopServer} style={{ marginLeft: "auto" }}>
+                  Stop tabbyAPI
+                </button>
+              </div>
+            </>
+          )}
+
+          {model.status === "loading" && (
+            <div style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", color: "var(--accent)", marginBottom: "0.75rem" }}>
+              Loading {model.name}&hellip; {model.progress}
+            </div>
+          )}
+
+          {(model.status === "loaded" || model.status === "loading") && (
+            <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
+              {model.status === "loaded" && (
+                <button className="btn-secondary" onClick={handleUnload}>
+                  Unload Model
+                </button>
+              )}
+              <button className="btn-danger btn-sm" onClick={handleStopServer}>
+                Stop tabbyAPI
+              </button>
+            </div>
+          )}
+
+          <div style={{ marginTop: "0.75rem", display: "flex", gap: "0.5rem" }}>
+            <button className="btn-secondary btn-sm" onClick={() => { setShowLog(v => !v); if (!showLog) setPolling(true); }}>
+              {showLog ? "Hide Log" : "Show Log"}
+            </button>
+            {procStatus === "starting" && (
+              <button className="btn-danger btn-sm" onClick={handleStopServer}>
+                Stop tabbyAPI
+              </button>
+            )}
+          </div>
+
+          {model.status === "loaded" && (
+            <div className="endpoint-banner">
+              <code>http://localhost:{status.port}/v1/chat/completions</code>
+              <p>
+                OpenAI-compatible endpoint ready.
+                Use with any client &mdash; <code>base_url=http://localhost:{status.port}/v1</code>
+                {status.api_key && <> &middot; <code>api_key={status.api_key}</code></>}
+              </p>
+            </div>
+          )}
+
+          {status?.error && (
+            <div style={{ marginTop: "0.75rem", fontFamily: "var(--font-mono)", fontSize: "0.75rem", color: "var(--red)" }}>
+              Error: {status.error}
+            </div>
+          )}
+          {model.error && (
+            <div style={{ marginTop: "0.75rem", fontFamily: "var(--font-mono)", fontSize: "0.75rem", color: "var(--red)" }}>
+              Load error: {model.error}
+            </div>
+          )}
+
+          {showLog && (
+            <div className="log-box" style={{ marginTop: "0.75rem", maxHeight: "300px" }}>
+              {status.log || "(no output yet)"}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── App ──────────────────────────────────────────────────
 function App() {
+  const [tab, setTab] = useState("llama");
   const modelsRefreshRef = useRef(null);
+  const tabbyModelsRef = useRef(null);
 
   return (
     <>
       <div className="header">
         <h1>llama-cpp-webui</h1>
         <span className="version">v1.0</span>
+        <div className="tabs">
+          <button className={`tab${tab === "llama" ? " active" : ""}`} onClick={() => setTab("llama")}>llama.cpp</button>
+          <button className={`tab${tab === "tabby" ? " active" : ""}`} onClick={() => setTab("tabby")}>exllamav3</button>
+        </div>
       </div>
-      <BuildSection />
-      <DownloadSection refreshModels={() => modelsRefreshRef.current?.()} />
-      <ModelSection modelsRef={modelsRefreshRef} />
+      {/* Both trees stay mounted so form state and polling survive tab switches */}
+      <div style={{ display: tab === "llama" ? "" : "none" }}>
+        <BuildSection />
+        <DownloadSection refreshModels={() => modelsRefreshRef.current?.()} />
+        <ModelSection modelsRef={modelsRefreshRef} />
+      </div>
+      <div style={{ display: tab === "tabby" ? "" : "none" }}>
+        <TabbyBuildSection />
+        <TabbyDownloadSection refreshModels={() => tabbyModelsRef.current?.()} />
+        <TabbyServerSection modelsRef={tabbyModelsRef} />
+      </div>
     </>
   );
 }

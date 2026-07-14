@@ -11,8 +11,10 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 import builder, downloader, gguf_reader, presets, server
-from config import load_all_settings
+import tabby_builder, tabby_models, tabby_server
+from config import load_all_exl3_settings, load_all_settings
 from server import LoadRequest
+from tabby_server import TabbyLoadRequest, TabbyStartRequest
 
 log = logging.getLogger("llama_cpp_webui")
 
@@ -25,6 +27,7 @@ _INDEX_HTML = Path(__file__).parent / "index.html"
 async def lifespan(app: FastAPI):
     yield
     await server.shutdown()
+    await tabby_server.shutdown()
 
 
 app = FastAPI(title="llama-cpp-webui", version="1.0.0", lifespan=lifespan)
@@ -44,6 +47,10 @@ class BuildRequest(BaseModel):
 
 class DownloadRequest(BaseModel):
     url: str
+
+class TabbyDownloadRequest(BaseModel):
+    repo_id: str
+    revision: str = ""
 
 class PresetRequest(BaseModel):
     id: str = ""
@@ -124,6 +131,85 @@ async def server_start(req: LoadRequest):
 async def server_stop():
     await server.stop()
     return {"message": "Server stopped"}
+
+
+# ── tabbyAPI (exllamav3) endpoints ───────────────────────
+
+@app.get("/api/tabby/build/status")
+async def tabby_build_status():
+    return tabby_builder.get_status()
+
+@app.post("/api/tabby/build/start")
+async def tabby_build_start():
+    if tabby_builder.is_installing():
+        raise HTTPException(409, "Install already in progress")
+    asyncio.create_task(tabby_builder.install())
+    return {"message": "Install started"}
+
+@app.get("/api/tabby/server/status")
+async def tabby_server_status():
+    return tabby_server.get_status()
+
+@app.post("/api/tabby/server/start")
+async def tabby_server_start(req: TabbyStartRequest = TabbyStartRequest()):
+    try:
+        await tabby_server.start(req)
+    except (RuntimeError, FileNotFoundError, ValueError) as e:
+        raise HTTPException(400, str(e))
+    return {"message": "tabbyAPI starting…"}
+
+@app.post("/api/tabby/server/stop")
+async def tabby_server_stop():
+    await tabby_server.stop()
+    return {"message": "tabbyAPI stopped"}
+
+@app.post("/api/tabby/server/load")
+async def tabby_server_load(req: TabbyLoadRequest):
+    try:
+        await tabby_server.load_model(req)
+    except (RuntimeError, ValueError) as e:
+        raise HTTPException(400, str(e))
+    return {"message": "Model loading…"}
+
+@app.post("/api/tabby/server/unload")
+async def tabby_server_unload():
+    try:
+        await tabby_server.unload_model()
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
+    return {"message": "Model unloaded"}
+
+@app.get("/api/tabby/models")
+async def tabby_list_models():
+    all_settings = load_all_exl3_settings()
+    models = tabby_models.list_models()
+    for m in models:
+        m["settings"] = all_settings.get(m["name"])
+    return {
+        "models": models,
+        "models_dir": str(tabby_models.get_exl3_models_dir()),
+        "downloads": tabby_models.get_downloads(),
+    }
+
+@app.post("/api/tabby/models/download")
+async def tabby_download_model(req: TabbyDownloadRequest):
+    try:
+        repo_id, revision = tabby_models.validate_download(req.repo_id, req.revision)
+        if tabby_server.get_status()["status"] != "running":
+            raise RuntimeError("Start tabbyAPI first — downloads go through its API.")
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(400, str(e))
+    asyncio.create_task(tabby_models.download(repo_id, revision))
+    return {"message": f"Download started: {repo_id}", "repo_id": repo_id}
+
+@app.delete("/api/tabby/models/{name}")
+async def tabby_delete_model(name: str):
+    try:
+        if not tabby_models.delete_model(name):
+            raise HTTPException(404, "Model not found")
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
+    return {"message": f"Deleted {name}"}
 
 
 # ── Preset endpoints ─────────────────────────────────────

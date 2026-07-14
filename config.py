@@ -27,6 +27,24 @@ def get_llama_cpp_dir() -> Path:
     return get_data_dir() / "llama.cpp"
 
 
+def get_tabby_dir() -> Path:
+    return get_data_dir() / "tabbyAPI"
+
+
+def get_exl3_models_dir() -> Path:
+    d = get_data_dir() / "models-exl3"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def get_exl3_settings_path() -> Path:
+    return get_data_dir() / "exl3_settings.json"
+
+
+def get_tabby_install_log_path() -> Path:
+    return get_data_dir() / "tabby_install.log"
+
+
 def get_models_dir() -> Path:
     d = get_data_dir() / "models"
     d.mkdir(parents=True, exist_ok=True)
@@ -89,49 +107,70 @@ presets_lock = _presets_lock
 
 # ── Settings persistence ──────────────────────────────
 
-def _read_all_settings_locked() -> dict:
-    """Read the settings file. Quarantine a corrupt JSON so the next save
+def _read_all_settings_locked(path: Path) -> dict:
+    """Read a settings file. Quarantine a corrupt JSON so the next save
     can't overwrite it with an empty dict (data-loss guard).
     Caller must hold _settings_lock.
     """
-    p = get_settings_path()
-    if not p.exists():
+    if not path.exists():
         return {}
     try:
-        return json.loads(p.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
-        backup = p.with_name(f"{p.name}.corrupt.{int(time.time())}")
+        backup = path.with_name(f"{path.name}.corrupt.{int(time.time())}")
         try:
-            p.rename(backup)
-            log.error("model_settings.json was corrupt; quarantined to %s", backup.name)
+            path.rename(backup)
+            log.error("%s was corrupt; quarantined to %s", path.name, backup.name)
         except OSError:
-            log.exception("Failed to quarantine corrupt model_settings.json")
+            log.exception("Failed to quarantine corrupt %s", path.name)
         return {}
     except OSError:
         return {}
 
 
+def _load_all(path: Path) -> dict:
+    with _settings_lock:
+        return _read_all_settings_locked(path)
+
+
+def _save_entry(path: Path, key: str, value: dict) -> None:
+    with _settings_lock:
+        all_s = _read_all_settings_locked(path)
+        all_s[key] = value
+        atomic_write_json(path, all_s)
+
+
+def _delete_entry(path: Path, key: str) -> None:
+    with _settings_lock:
+        all_s = _read_all_settings_locked(path)
+        if key in all_s:
+            del all_s[key]
+            atomic_write_json(path, all_s)
+
+
+# llama.cpp per-model settings (model_settings.json, keyed by gguf filename)
+
 def load_all_settings() -> dict:
-    with _settings_lock:
-        return _read_all_settings_locked()
-
-
-def save_all_settings(data: dict) -> None:
-    with _settings_lock:
-        atomic_write_json(get_settings_path(), data)
+    return _load_all(get_settings_path())
 
 
 def save_model_settings(filename: str, settings: dict) -> None:
-    with _settings_lock:
-        all_s = _read_all_settings_locked()
-        all_s[filename] = settings
-        atomic_write_json(get_settings_path(), all_s)
+    _save_entry(get_settings_path(), filename, settings)
 
 
 def delete_model_settings(filename: str) -> None:
-    """Remove a model's settings entry, if present. No-op otherwise."""
-    with _settings_lock:
-        all_s = _read_all_settings_locked()
-        if filename in all_s:
-            del all_s[filename]
-            atomic_write_json(get_settings_path(), all_s)
+    _delete_entry(get_settings_path(), filename)
+
+
+# exllamav3 per-model settings (exl3_settings.json, keyed by model dir name)
+
+def load_all_exl3_settings() -> dict:
+    return _load_all(get_exl3_settings_path())
+
+
+def save_exl3_settings(name: str, settings: dict) -> None:
+    _save_entry(get_exl3_settings_path(), name, settings)
+
+
+def delete_exl3_settings(name: str) -> None:
+    _delete_entry(get_exl3_settings_path(), name)

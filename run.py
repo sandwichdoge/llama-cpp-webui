@@ -15,7 +15,8 @@ from app import app
 
 # Filter out the noisy polling requests from uvicorn access logs
 class PollFilter(logging.Filter):
-    SUPPRESSED = ("/api/build/status", "/api/models", "/api/server/status")
+    SUPPRESSED = ("/api/build/status", "/api/models", "/api/server/status",
+                  "/api/tabby/build/status", "/api/tabby/server/status", "/api/tabby/models")
 
     def filter(self, record: logging.LogRecord) -> bool:
         msg = record.getMessage()
