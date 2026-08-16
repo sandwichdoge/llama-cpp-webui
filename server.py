@@ -19,7 +19,7 @@ class LoadRequest(BaseModel):
     """API + internal launch spec for llama-server."""
     model_path: str
     port: int = 5000
-    n_gpu_layers: int = -1
+    n_gpu_layers: int | str = "all"
     ctx_size: int = 32768
     n_parallel: int = 1
     # Multimodal

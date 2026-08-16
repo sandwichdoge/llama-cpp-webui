@@ -349,7 +349,7 @@ function estimateVram(meta, ngl, ctx, cacheK, cacheV) {
   if (!meta) return null;
   const { n_layers, n_kv_heads, embedding_dim, size_mb } = meta;
   const cache_type = ((CACHE_BITS[cacheK] || 16) + (CACHE_BITS[cacheV] || 16)) / 2;
-  const gpu_layers = ngl === -1 ? n_layers : Math.min(Math.max(0, ngl), n_layers);
+  const gpu_layers = (ngl === -1 || ngl === "all") ? n_layers : Math.min(Math.max(0, ngl), n_layers);
   const size_per_layer = size_mb / n_layers;
   const kv_cache_factor = n_kv_heads * cache_type * ctx;
   const embedding_per_context = embedding_dim / ctx;
@@ -700,7 +700,7 @@ function ModelSection({ modelsRef }) {
   const [showCmd, setShowCmd] = useState(false);
 
   // Basic params
-  const [ngl, setNgl] = useState(-1);
+  const [ngl, setNgl] = useState("all");
   const [ctx, setCtx] = useState(32768);
   const [npar, setNpar] = useState(1);
   const [port, setPort] = useState(5000);
@@ -739,7 +739,7 @@ function ModelSection({ modelsRef }) {
 
   const applySettings = (s) => {
     const d = s || {};
-    setNgl(d.n_gpu_layers ?? -1);
+    setNgl(d.n_gpu_layers ?? "all");
     setCtx(d.ctx_size ?? 32768);
     setNpar(d.n_parallel ?? 1);
     setPort(d.port ?? 5000);
@@ -924,8 +924,8 @@ function ModelSection({ modelsRef }) {
 
           <div className="params-grid">
             <div>
-              <label>GPU Layers (-1=all)</label>
-              <input type="number" value={ngl} onChange={e => setNgl(+e.target.value)} />
+              <label>GPU Layers (all or N)</label>
+              <input type="text" value={ngl} onChange={e => setNgl(e.target.value)} />
             </div>
             <div>
               <label>Context Size</label>
